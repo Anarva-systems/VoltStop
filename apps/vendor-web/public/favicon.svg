@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="VoltStop">
+  <rect width="64" height="64" rx="16" fill="#091624"/>
+  <path d="M18 14h10l4 15 4-15h10L35 50h-9z" fill="#20c86b"/>
+  <path d="M20 14h8l4 15 4-15h8" fill="none" stroke="#43d7ee" stroke-width="2" opacity=".85"/>
+</svg>

@@ -1,0 +1,84 @@
+{
+  "phase": 27,
+  "status": "BLOCKED",
+  "attempt_date": "2026-10-04",
+  "environment": "local-isolated (external staging resources absent)",
+  "phase_28_authorized": false,
+  "infrastructure": {
+    "docker": {"version": "29.8.0", "status": "PASS"},
+    "supabase_cli": {"version": "2.119.0", "status": "PASS"},
+    "cloud_staging_host": {"status": "BLOCKED", "reason": "no public HTTPS host or cloud Supabase project exists"}
+  },
+  "security": {
+    "rls": {"status": "PASS", "evidence": "17/17 tables enabled; customer/vendor isolation and default-deny disputes verified via SQL baseline"},
+    "authentication": {"status": "PASS", "evidence": "GoTrue signup/login + /auth/me + profile 11/11 live smoke"},
+    "authorization_rbac": {"status": "PASS", "evidence": "SUPER_ADMIN 200 (19 permissions); SUPPORT_ADMIN 403 on payouts:read, 200 on bookings:read; non-admin 403; anonymous 401"},
+    "cors": {"status": "PASS", "evidence": "portal origin allowed, foreign origin not granted"},
+    "secret_hygiene": {"status": "PASS", "evidence": "no secrets printed; root .env untouched; Redis password generated local secret"}
+  },
+  "database": {
+    "postgres": {"version": "15.19", "container": "supabase_db_voltstop", "status": "PASS"},
+    "migrations": {"applied": 5, "status": "PASS", "method": "supabase db reset"},
+    "schema": {"status": "PASS", "evidence": "supabase/verify.sql passed; PostGIS + pgcrypto present"}
+  },
+  "redis": {
+    "version": "7.4.11",
+    "container": "voltstop-phase27-redis",
+    "endpoint": "127.0.0.1:6397",
+    "auth": "PASS",
+    "tls": "BLOCKED",
+    "booking_lock_live_api": "PASS (9/9)",
+    "leftover_keys": 0
+  },
+  "api": {
+    "startup": "PASS",
+    "health": "PASS",
+    "environment": "development (staging structurally requires external resources)",
+    "staging_config": "BLOCKED"
+  },
+  "web": {
+    "typecheck": "PASS",
+    "build": "PASS",
+    "runtime_smoke": "PASS",
+    "staging_config": "PASS (local stack)"
+  },
+  "payments": {
+    "razorpay_test_credentials": "BLOCKED",
+    "booking_flow_to_payment_boundary": "PASS (503 PAYMENT_UNAVAILABLE at provider boundary)",
+    "payment_security_code_audit": "PASS",
+    "refund_security_audit": "PASS"
+  },
+  "webhook": {
+    "route": "PASS",
+    "signature_verification_fail_closed": "PASS (401 unsigned and forged, live)",
+    "external_reachability": "BLOCKED"
+  },
+  "testing": {
+    "backend": "75 passed, 3 skipped",
+    "web": "tsc --noEmit exit 0; next build exit 0",
+    "configuration": "15 config tests passed (within backend 75)",
+    "payment_webhook_security_unit": "12 passed (within backend 75)",
+    "integration": "3 skipped (require real Razorpay TEST credentials)",
+    "flutter": "BLOCKED (SDK absent)"
+  },
+  "blockers": [
+    "Razorpay TEST credentials (rzp_test_ key id, key secret, webhook secret) do not exist; required in .env.integration.local to enable real test payments, refunds, positive-path webhooks, and the 3 integration tests",
+    "No public HTTPS staging host / cloud Supabase project / TLS Redis; ENVIRONMENT=staging cannot be satisfied locally by design (config validator forbids localhost staging)",
+    "Flutter SDK absent; apps/mobile cannot be built or tested",
+    "D:\\voltstop is not a git repository; version-control and CI verification impossible"
+  ],
+  "warnings": [
+    "Multi-tenant Docker host: other projects' containers occupy ports 5432/6379; VoltStop must keep using 54321-54324, 6397, 8000, 3000",
+    "vendor-web NEXT_PUBLIC_* variables are inlined at build time; rebuild required when they change",
+    "Local GoTrue autoconfirms signups (local-only); production must not",
+    "Local stack is LOCAL verification, not cloud staging"
+  ],
+  "fixtures_retained": {
+    "customer_a": "phase27-customer@voltstop.test",
+    "customer_b": "phase27-customer-b@voltstop.test (SUPPORT_ADMIN)",
+    "vendor_a": "phase27-vendor@voltstop.test",
+    "vendor_b": "phase27-vendor-b@voltstop.test",
+    "admin": "phase27-admin@voltstop.test (SUPER_ADMIN)",
+    "note": "persist in local supabase_db_voltstop volume; bearer-token artifact deleted"
+  }
+}
