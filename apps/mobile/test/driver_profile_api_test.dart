@@ -28,6 +28,20 @@ void main() {
     );
   });
 
+  test('malformed profile payload reports a safe response error', () async {
+    final adapter = _ProfileApiAdapter(responseData: <dynamic>[]);
+    final api = ApiClient(accessToken: () async => 'verified-access-token');
+    api.dio.httpClientAdapter = adapter;
+    final repository = DriverRepository(api);
+
+    await expectLater(
+      repository.profile(),
+      throwsA(isA<ApiException>()
+          .having((error) => error.category, 'category', 'response')
+          .having((error) => error.message, 'message', contains('unexpected'))),
+    );
+  });
+
   test('driver profile save sends changes to the authenticated API', () async {
     final adapter = _ProfileApiAdapter();
     final api = ApiClient(accessToken: () async => 'verified-access-token');
@@ -226,6 +240,9 @@ void main() {
 }
 
 class _ProfileApiAdapter implements HttpClientAdapter {
+  _ProfileApiAdapter({this.responseData});
+
+  final Object? responseData;
   final requests = <RequestOptions>[];
 
   @override
@@ -238,15 +255,16 @@ class _ProfileApiAdapter implements HttpClientAdapter {
     return ResponseBody.fromString(
       jsonEncode({
         'success': true,
-        'data': {
-          'id': 'a0000000-0000-4000-8000-000000000001',
-          'phone': '+919876543210',
-          'name': 'Test Driver',
-          'car_model': 'Test EV',
-          'battery_kwh': 60,
-          'default_efficiency_km_per_kwh': 6.2,
-          'current_soc': 75,
-        },
+        'data': responseData ??
+            {
+              'id': 'a0000000-0000-4000-8000-000000000001',
+              'phone': '+919876543210',
+              'name': 'Test Driver',
+              'car_model': 'Test EV',
+              'battery_kwh': 60,
+              'default_efficiency_km_per_kwh': 6.2,
+              'current_soc': 75,
+            },
       }),
       200,
       headers: {

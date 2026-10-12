@@ -1,3 +1,5 @@
+import 'dart:io' show HandshakeException, SocketException;
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import '../config/app_config.dart';
@@ -14,9 +16,18 @@ class ApiClient {
     dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) async {
         final token = await _accessToken();
-        if (token != null && token.isNotEmpty) {
-          options.headers['Authorization'] = 'Bearer $token';
+        if (token == null || token.isEmpty) {
+          handler.reject(DioException(
+            requestOptions: options,
+            type: DioExceptionType.cancel,
+            error: const ApiException(
+              'Your sign-in session is missing. Sign in again and retry.',
+              category: 'authentication',
+            ),
+          ));
+          return;
         }
+        options.headers['Authorization'] = 'Bearer $token';
         handler.next(options);
       },
     ));
@@ -43,6 +54,7 @@ class ApiClient {
     try {
       return _unwrap(await request());
     } on DioException catch (error) {
+      if (error.error is ApiException) throw error.error as ApiException;
       final status = error.response?.statusCode;
       final responseError = error.response?.data;
       final bodyError = responseError is Map ? responseError['error'] : null;
@@ -62,6 +74,7 @@ class ApiClient {
           'Your session could not be verified. Sign in again and retry.',
           statusCode: status,
           code: bodyCode,
+          category: 'authentication',
         );
       }
       if (status == 403) {
@@ -69,6 +82,7 @@ class ApiClient {
           'You do not have permission to access this information.',
           statusCode: status,
           code: bodyCode,
+          category: 'authorization',
         );
       }
       if (status == 404) {
@@ -76,6 +90,7 @@ class ApiClient {
           bodyMessage ?? 'This route, menu, or order is no longer available.',
           statusCode: status,
           code: bodyCode,
+          category: 'not_found',
         );
       }
       if (status == 422) {
@@ -83,6 +98,7 @@ class ApiClient {
           bodyMessage ?? 'Check the information and try again.',
           statusCode: status,
           code: bodyCode,
+          category: 'validation',
         );
       }
       if (status != null && status >= 500) {
@@ -94,6 +110,7 @@ class ApiClient {
               : (bodyMessage ?? 'VoltStop could not complete this request.'),
           statusCode: status,
           code: bodyCode,
+          category: 'server',
         );
       }
       if (status != null) {
@@ -102,11 +119,79 @@ class ApiClient {
               'The request could not be completed. Please try again.',
           statusCode: status,
           code: bodyCode,
+          category: 'request',
         );
       }
-      throw const ApiException(
-        'Could not reach VoltStop. Check your connection and try again.',
+      throw _networkException(error);
+    }
+  }
+
+  ApiException _networkException(DioException error) {
+    final cause = error.error;
+    if (cause is HandshakeException) {
+      return const ApiException(
+        'VoltStop could not establish a secure connection. Retry on a trusted network.',
+        category: 'tls',
       );
+    }
+    if (cause is SocketException) {
+      final details = cause.message.toLowerCase();
+      final dnsFailure = details.contains('failed host lookup') ||
+          details.contains('name or service not known') ||
+          details.contains('nodename nor servname');
+      return ApiException(
+        dnsFailure
+            ? 'The API address could not be found. Check internet access and retry.'
+            : 'VoltStop could not be reached. Check internet access and the API address, then retry.',
+        category: dnsFailure ? 'dns' : 'network',
+      );
+    }
+    switch (error.type) {
+      case DioExceptionType.connectionTimeout:
+        return const ApiException(
+          'The connection to VoltStop timed out. Check your network and retry.',
+          category: 'timeout',
+        );
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+      case DioExceptionType.transformTimeout:
+        return const ApiException(
+          'VoltStop did not respond in time. Retry in a moment.',
+          category: 'timeout',
+        );
+      case DioExceptionType.badCertificate:
+        return const ApiException(
+          'VoltStop could not establish a secure connection. Check the app URL or network and retry.',
+          category: 'tls',
+        );
+      case DioExceptionType.connectionError:
+        return const ApiException(
+          'VoltStop could not be reached. Check internet access and the API address, then retry.',
+          category: 'network',
+        );
+      case DioExceptionType.unknown:
+        if (error.error is HandshakeException) {
+          return const ApiException(
+            'VoltStop could not establish a secure connection. Retry on a trusted network.',
+            category: 'tls',
+          );
+        }
+        if (error.error is SocketException) {
+          return const ApiException(
+            'VoltStop could not be reached. Check internet access and DNS, then retry.',
+            category: 'network',
+          );
+        }
+        return const ApiException(
+          'The request could not reach VoltStop. Check the API address and network, then retry.',
+          category: 'network',
+        );
+      case DioExceptionType.badResponse:
+      case DioExceptionType.cancel:
+        return const ApiException(
+          'The request could not be completed. Retry in a moment.',
+          category: 'network',
+        );
     }
   }
 
@@ -115,9 +200,16 @@ class ApiClient {
     if (body is Map<String, dynamic>) {
       if (body['success'] == false) {
         final error = body['error'];
-        throw ApiException(error is Map
-            ? '${error['message'] ?? 'Request failed'}'
-            : 'Request failed');
+        throw ApiException(
+          error is Map
+              ? '${error['message'] ?? 'Request failed'}'
+              : 'Request failed',
+          statusCode: response.statusCode,
+          code: error is Map && error['code'] is String
+              ? error['code'] as String
+              : null,
+          category: _categoryForStatus(response.statusCode),
+        );
       }
       return body.containsKey('data') ? body['data'] : body;
     }
@@ -125,11 +217,21 @@ class ApiClient {
   }
 }
 
+String _categoryForStatus(int? status) {
+  if (status == 401) return 'authentication';
+  if (status == 403) return 'authorization';
+  if (status == 404) return 'not_found';
+  if (status != null && status >= 500) return 'server';
+  return 'request';
+}
+
 class ApiException implements Exception {
-  const ApiException(this.message, {this.statusCode, this.code});
+  const ApiException(this.message,
+      {this.statusCode, this.code, this.category = 'request'});
   final String message;
   final int? statusCode;
   final String? code;
+  final String category;
   @override
   String toString() => message;
 }

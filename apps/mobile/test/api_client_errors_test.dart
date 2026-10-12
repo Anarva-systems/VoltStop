@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voltstop_mobile/core/services/api_client.dart';
@@ -21,6 +23,66 @@ ApiClient clientReturning(int status, Map<String, dynamic> body) {
 }
 
 void main() {
+  test('missing access token is reported as authentication before network IO',
+      () async {
+    var sent = false;
+    final client = ApiClient(accessToken: () async => null);
+    client.dio.interceptors.add(InterceptorsWrapper(
+      onRequest: (options, handler) {
+        sent = true;
+        handler.next(options);
+      },
+    ));
+
+    await expectLater(
+      client.get('/profile'),
+      throwsA(isA<ApiException>()
+          .having((error) => error.category, 'category', 'authentication')),
+    );
+    expect(sent, isFalse);
+  });
+
+  test('DNS failures are identified separately from general network errors',
+      () async {
+    final client = ApiClient(accessToken: () async => 'test-token');
+    client.dio.interceptors.add(InterceptorsWrapper(
+      onRequest: (options, handler) => handler.reject(
+        DioException(
+          requestOptions: options,
+          type: DioExceptionType.connectionError,
+          error: const SocketException('Failed host lookup: API host'),
+        ),
+      ),
+    ));
+
+    await expectLater(
+      client.get('/profile'),
+      throwsA(isA<ApiException>()
+          .having((error) => error.category, 'category', 'dns')
+          .having(
+              (error) => error.message, 'message', contains('API address'))),
+    );
+  });
+
+  test('connection timeout is distinct from server responses', () async {
+    final client = ApiClient(accessToken: () async => 'test-token');
+    client.dio.interceptors.add(InterceptorsWrapper(
+      onRequest: (options, handler) => handler.reject(
+        DioException(
+          requestOptions: options,
+          type: DioExceptionType.connectionTimeout,
+        ),
+      ),
+    ));
+
+    await expectLater(
+      client.get('/profile'),
+      throwsA(isA<ApiException>()
+          .having((error) => error.category, 'category', 'timeout')
+          .having((error) => error.message, 'message', contains('timed out'))),
+    );
+  });
+
   test('unauthorized responses ask the customer to sign in again', () async {
     final client = clientReturning(401, {
       'success': false,
@@ -33,7 +95,8 @@ void main() {
         isA<ApiException>()
             .having((error) => error.statusCode, 'status', 401)
             .having((error) => error.code, 'code', 'UNAUTHORIZED')
-            .having((error) => error.message, 'message', contains('Sign in')),
+            .having((error) => error.message, 'message', contains('Sign in'))
+            .having((error) => error.category, 'category', 'authentication'),
       ),
     );
   });
@@ -53,7 +116,8 @@ void main() {
         isA<ApiException>()
             .having((error) => error.statusCode, 'status', 404)
             .having(
-                (error) => error.message, 'message', 'Restaurant unavailable'),
+                (error) => error.message, 'message', 'Restaurant unavailable')
+            .having((error) => error.category, 'category', 'not_found'),
       ),
     );
   });
@@ -74,7 +138,8 @@ void main() {
         isA<ApiException>()
             .having((error) => error.statusCode, 'status', 500)
             .having((error) => error.message, 'message',
-                contains('Try again shortly')),
+                contains('Try again shortly'))
+            .having((error) => error.category, 'category', 'server'),
       ),
     );
   });
@@ -94,7 +159,8 @@ void main() {
         isA<ApiException>()
             .having((error) => error.statusCode, 'status', 503)
             .having((error) => error.message, 'message',
-                'Razorpay is not configured'),
+                'Razorpay is not configured')
+            .having((error) => error.category, 'category', 'server'),
       ),
     );
   });

@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import '../core/services/api_client.dart';
 import '../models/driver_profile.dart';
 import '../models/driver_vehicle.dart';
 import '../repositories/auth_repository.dart';
@@ -12,6 +13,7 @@ class AppController extends ChangeNotifier {
   DriverProfile? profile;
   List<DriverVehicle> vehicles = const [];
   String? profileLoadError;
+  String? profileLoadErrorCategory;
   String? vehicleLoadError;
   bool isProfileLoading = false;
 
@@ -43,10 +45,13 @@ class AppController extends ChangeNotifier {
     try {
       profile = await driverRepository.profile();
       profileLoadError = null;
+      profileLoadErrorCategory = null;
       await loadVehicles(notify: false);
     } catch (error) {
       profile = null;
       profileLoadError = '$error';
+      profileLoadErrorCategory =
+          error is ApiException ? error.category : 'unexpected';
     } finally {
       isProfileLoading = false;
       notifyListeners();
@@ -56,6 +61,7 @@ class AppController extends ChangeNotifier {
   Future<void> saveProfile(DriverProfile value) async {
     profile = await driverRepository.saveProfile(value);
     profileLoadError = null;
+    profileLoadErrorCategory = null;
     notifyListeners();
   }
 
@@ -66,6 +72,7 @@ class AppController extends ChangeNotifier {
     profile = null;
     vehicles = const [];
     profileLoadError = null;
+    profileLoadErrorCategory = null;
     vehicleLoadError = null;
     notifyListeners();
   }

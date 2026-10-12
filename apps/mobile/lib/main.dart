@@ -15,8 +15,9 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setSystemUIOverlayStyle(voltSystemUiOverlayStyle);
   final apiConfigError = AppConfig.apiConfigurationError;
-  if (AppConfig.appEnvironment.toLowerCase() == 'production' &&
-      apiConfigError != null) {
+  if (apiConfigError != null &&
+      (AppConfig.appEnvironment.toLowerCase() == 'production' ||
+          const bool.fromEnvironment('dart.vm.product'))) {
     runApp(_ApiConfigurationError(message: apiConfigError));
     return;
   }
@@ -123,6 +124,12 @@ class _ProfileRecoveryScreen extends StatelessWidget {
                       const SizedBox(height: 12),
                       const Text('We could not load your driver profile.',
                           textAlign: TextAlign.center),
+                      const SizedBox(height: 6),
+                      Text(_profileIssueLabel(app.profileLoadErrorCategory),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                              color: VoltColors.warning,
+                              fontWeight: FontWeight.w700)),
                       const SizedBox(height: 8),
                       Text('${app.profileLoadError}',
                           textAlign: TextAlign.center,
@@ -163,3 +170,16 @@ class _ApiConfigurationError extends StatelessWidget {
         )))),
       );
 }
+
+String _profileIssueLabel(String? category) => switch (category) {
+      'authentication' => 'Sign-in session issue',
+      'authorization' => 'Account access issue',
+      'not_found' => 'Profile not found',
+      'server' => 'VoltStop service issue',
+      'timeout' => 'Request timed out',
+      'tls' => 'Secure connection issue',
+      'network' => 'Network connection issue',
+      'dns' => 'DNS lookup issue',
+      'response' => 'Unexpected API response',
+      _ => 'Profile loading issue',
+    };

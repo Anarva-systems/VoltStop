@@ -33,9 +33,14 @@ class DriverRepository {
     // The authenticated API verifies the Supabase token and synchronizes a
     // profile row before reading it. This handles first sign-ins even when the
     // Auth user's profile trigger was missing or delayed.
-    return DriverProfile.fromJson(
-      Map<String, dynamic>.from(await _api.get('/profile') as Map),
-    );
+    final result = await _api.get('/profile');
+    if (result is! Map) {
+      throw const ApiException(
+        'VoltStop returned an unexpected driver profile response. Retry or contact support.',
+        category: 'response',
+      );
+    }
+    return DriverProfile.fromJson(Map<String, dynamic>.from(result));
   }
 
   Future<DriverProfile> saveProfile(DriverProfile profile) async {
