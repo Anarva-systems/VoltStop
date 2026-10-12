@@ -8,6 +8,7 @@ export async function resolveRole(token: string): Promise<string> {
     return "/admin";
   } catch (reason) {
     const adminStatus = getStatus(reason);
+    if (adminStatus === undefined && reason instanceof Error) throw reason;
     if (adminStatus !== 403) {
       throw new Error(adminStatus === 401
         ? "Your session could not be verified. Please sign in again."
@@ -20,6 +21,7 @@ export async function resolveRole(token: string): Promise<string> {
     return "/vendor/dashboard";
   } catch (reason) {
     const vendorStatus = getStatus(reason);
+    if (vendorStatus === undefined && reason instanceof Error) throw reason;
     if (vendorStatus === 404) return "/vendor/profile";
     if (vendorStatus === 401) throw new Error("Your session could not be verified. Please sign in again.");
     throw new Error("Your vendor profile could not be verified. Check the API status and try again.");

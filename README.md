@@ -82,6 +82,16 @@ slots, services, and revenue are read and updated through owner-scoped API
 endpoints. New business profiles remain hidden until VoltStop verifies and
 activates them.
 
+For the deployed VoltStop portal, set the vendor-web project's Production
+`NEXT_PUBLIC_API_URL` to `https://api-one-nu-41.vercel.app/api/v1` before
+building. Set the API project's Production `VENDOR_PORTAL_ORIGIN` to
+`https://vendor-web-xi.vercel.app`. Keep the backend in `ENVIRONMENT=production`
+and provide its required database, Supabase, Redis, and payment settings there;
+do not place backend credentials in the frontend project. Preview and local
+deployments should use their own API and portal origins. The web client now
+fails with a configuration message if a non-development build has no API URL,
+instead of silently calling localhost.
+
 The same application also serves the internal administrator console at
 `http://localhost:3000/admin/login`. Admin login uses Supabase Auth, then the
 API checks `public.admin_users` and role permissions on every request. Applying

@@ -33,6 +33,34 @@ class AppConfig {
     defaultValue: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
   );
 
+  static String? validateApiBaseUrl(String value,
+      {required String environment}) {
+    final uri = Uri.tryParse(value);
+    if (uri == null ||
+        !uri.hasScheme ||
+        !uri.hasAuthority ||
+        uri.host.isEmpty ||
+        uri.userInfo.isNotEmpty ||
+        uri.query.isNotEmpty ||
+        uri.fragment.isNotEmpty) {
+      return 'API_BASE_URL must be an absolute service URL.';
+    }
+    if ({'staging', 'production'}.contains(environment.toLowerCase())) {
+      final host = uri.host.toLowerCase();
+      final localHost = host == 'localhost' ||
+          host.endsWith('.local') ||
+          host.contains(':') ||
+          RegExp(r'^\d{1,3}(?:\.\d{1,3}){3}$').hasMatch(host);
+      if (uri.scheme != 'https' || localHost) {
+        return 'Staging and production API_BASE_URL values must use HTTPS with a DNS host.';
+      }
+    }
+    return null;
+  }
+
+  static String? get apiConfigurationError =>
+      validateApiBaseUrl(apiBaseUrl, environment: appEnvironment);
+
   static bool get hasSupabase =>
       supabaseUrl.isNotEmpty && supabasePublishableKey.isNotEmpty;
   static bool get hasMaps => osmTileUrl.isNotEmpty;

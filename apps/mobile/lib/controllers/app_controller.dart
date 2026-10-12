@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import '../models/driver_profile.dart';
+import '../models/driver_vehicle.dart';
 import '../repositories/auth_repository.dart';
 import '../repositories/driver_repository.dart';
 
@@ -9,11 +10,31 @@ class AppController extends ChangeNotifier {
   final AuthRepository auth;
   final DriverRepository driverRepository;
   DriverProfile? profile;
+  List<DriverVehicle> vehicles = const [];
   String? profileLoadError;
+  String? vehicleLoadError;
   bool isProfileLoading = false;
 
+  DriverVehicle? get activeVehicle {
+    for (final vehicle in vehicles) {
+      if (vehicle.isDefault) return vehicle;
+    }
+    return vehicles.isEmpty ? null : vehicles.first;
+  }
+
   bool get isSignedIn => auth.currentSession != null;
-  bool get profileComplete => profile?.isComplete ?? false;
+  bool get profileComplete =>
+      activeVehicle?.isComplete ?? (profile?.isComplete ?? false);
+
+  Future<void> loadVehicles({bool notify = true}) async {
+    try {
+      vehicles = await driverRepository.vehicles();
+      vehicleLoadError = null;
+    } catch (error) {
+      vehicleLoadError = '$error';
+    }
+    if (notify) notifyListeners();
+  }
 
   Future<void> loadProfile() async {
     if (!isSignedIn) return;
@@ -22,6 +43,7 @@ class AppController extends ChangeNotifier {
     try {
       profile = await driverRepository.profile();
       profileLoadError = null;
+      await loadVehicles(notify: false);
     } catch (error) {
       profile = null;
       profileLoadError = '$error';
@@ -37,10 +59,14 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> refreshVehicles() => loadVehicles();
+
   Future<void> logout() async {
     await auth.signOut();
     profile = null;
+    vehicles = const [];
     profileLoadError = null;
+    vehicleLoadError = null;
     notifyListeners();
   }
 }

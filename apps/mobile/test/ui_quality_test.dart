@@ -8,6 +8,7 @@ import 'package:voltstop_mobile/features/auth/views/auth_screens.dart';
 import 'package:voltstop_mobile/features/driver/views/driver_screens.dart';
 import 'package:voltstop_mobile/models/booking.dart';
 import 'package:voltstop_mobile/models/driver_profile.dart';
+import 'package:voltstop_mobile/models/driver_vehicle.dart';
 import 'package:voltstop_mobile/models/pitstop.dart';
 import 'package:voltstop_mobile/repositories/auth_repository.dart';
 import 'package:voltstop_mobile/repositories/driver_repository.dart';
@@ -65,9 +66,10 @@ void main() {
     await tester.pumpAndSettle();
     final fields = find.byType(TextField);
     await tester.enterText(fields.at(0), 'Ashapu Lokesh');
-    await tester.enterText(fields.at(1), 'Tata Sierra');
-    await tester.enterText(fields.at(2), '50');
-    await tester.enterText(fields.at(3), '120');
+    await tester.enterText(fields.at(1), 'Tata');
+    await tester.enterText(fields.at(2), 'Sierra');
+    await tester.enterText(fields.at(3), '50');
+    await tester.enterText(fields.at(4), '120');
     await tester.tap(find.text('Complete setup'));
     await tester.pumpAndSettle();
 
@@ -276,6 +278,9 @@ class _PreviewDriverRepository extends DriverRepository {
   int routePlanCalls = 0;
 
   @override
+  Future<List<DriverVehicle>> vehicles() async => const [];
+
+  @override
   Future<DriverProfile> profile() async {
     if (failProfile) throw StateError('temporary profile read failure');
     return const DriverProfile();
@@ -292,6 +297,7 @@ class _PreviewDriverRepository extends DriverRepository {
     required double stateOfCharge,
     required double efficiency,
     bool persist = true,
+    DateTime? departureAt,
   }) async {
     routePlanCalls++;
     return {

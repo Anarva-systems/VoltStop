@@ -36,6 +36,7 @@ async def plan_route(
         payload.efficiency_km_per_kwh,
         database,
     )
+    result["departure_at"] = payload.departure_at.isoformat() if payload.departure_at else None
     if payload.persist:
         route_id = await database.save_driver_route(user.id, payload, result)
         result["route_id"] = str(route_id)

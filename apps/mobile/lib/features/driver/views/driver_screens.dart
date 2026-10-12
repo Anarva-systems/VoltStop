@@ -17,6 +17,7 @@ import '../../../models/booking.dart';
 import '../../../models/driver_profile.dart';
 import '../../../models/pitstop.dart';
 import 'dispute_screens.dart';
+import 'vehicles_screen.dart';
 import 'restaurant_screens.dart';
 
 class ProfileSetupScreen extends StatefulWidget {
@@ -28,6 +29,7 @@ class ProfileSetupScreen extends StatefulWidget {
 
 class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
   final _name = TextEditingController();
+  final _make = TextEditingController();
   final _model = TextEditingController();
   final _battery = TextEditingController();
   final _efficiency = TextEditingController();
@@ -39,7 +41,8 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
     super.initState();
     final profile = widget.app.profile;
     _name.text = profile?.name ?? '';
-    _model.text = profile?.carModel ?? '';
+    _make.text = widget.app.activeVehicle?.make ?? '';
+    _model.text = widget.app.activeVehicle?.model ?? profile?.carModel ?? '';
     _battery.text = profile?.batteryKwh?.toString() ?? '';
     _efficiency.text = profile?.efficiencyKmPerKwh?.toString() ?? '';
   }
@@ -47,6 +50,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
   @override
   void dispose() {
     _name.dispose();
+    _make.dispose();
     _model.dispose();
     _battery.dispose();
     _efficiency.dispose();
@@ -57,13 +61,14 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
     final battery = double.tryParse(_battery.text);
     final efficiency = double.tryParse(_efficiency.text);
     if (_name.text.trim().isEmpty ||
+        _make.text.trim().isEmpty ||
         _model.text.trim().isEmpty ||
         battery == null ||
         efficiency == null ||
         battery <= 0 ||
         efficiency <= 0) {
       setState(() => _error =
-          'Enter a name, vehicle, battery capacity and efficiency greater than zero.');
+          'Enter a name, vehicle make and model, battery capacity and efficiency greater than zero.');
       return;
     }
     if (battery > 500) {
@@ -84,11 +89,32 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
         id: widget.app.profile?.id,
         phone: widget.app.profile?.phone,
         name: _name.text.trim(),
-        carModel: _model.text.trim(),
+        carModel: '${_make.text.trim()} ${_model.text.trim()}',
         batteryKwh: battery,
         efficiencyKmPerKwh: efficiency,
         currentSoc: widget.app.profile?.currentSoc,
       ));
+      if (widget.app.vehicles.isEmpty) {
+        await widget.app.driverRepository.createVehicle(
+          make: _make.text.trim(),
+          model: _model.text.trim(),
+          vehicleType: 'car',
+          batteryKwh: battery,
+          efficiencyKmPerKwh: efficiency,
+          currentSoc: widget.app.profile?.currentSoc,
+          isDefault: true,
+        );
+        await widget.app.refreshVehicles();
+      } else if (widget.app.activeVehicle != null) {
+        final vehicle = widget.app.activeVehicle!;
+        await widget.app.driverRepository.updateVehicle(vehicle.id, {
+          'make': _make.text.trim(),
+          'model': _model.text.trim(),
+          'battery_kwh': battery,
+          'efficiency_km_per_kwh': efficiency,
+        });
+        await widget.app.refreshVehicles();
+      }
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => DriverShell(app: widget.app)),
@@ -123,6 +149,8 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
             style: TextStyle(color: VoltColors.muted)),
         const SizedBox(height: 28),
         _input(_name, 'Driver full name', Icons.person_outline),
+        const SizedBox(height: 12),
+        _input(_make, 'Vehicle make', Icons.directions_car_outlined),
         const SizedBox(height: 12),
         _input(_model, 'EV model', Icons.electric_car_outlined),
         const SizedBox(height: 12),
@@ -248,7 +276,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _soc = widget.app.profile?.currentSoc;
+    _soc =
+        widget.app.activeVehicle?.currentSoc ?? widget.app.profile?.currentSoc;
     _load();
     final repository = widget.app.driverRepository;
     _catalogChanges = repository.watchPitstopDirectoryChanges().listen(
@@ -278,8 +307,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<Map<String, dynamic>> _previewRoute() {
-    final battery = _profile.batteryKwh;
-    final efficiency = _profile.efficiencyKmPerKwh;
+    final battery = widget.app.activeVehicle?.batteryKwh ?? _profile.batteryKwh;
+    final efficiency = widget.app.activeVehicle?.efficiencyKmPerKwh ??
+        _profile.efficiencyKmPerKwh;
     final stateOfCharge = _soc;
     if (battery == null || efficiency == null || stateOfCharge == null) {
       return Future.value(<String, dynamic>{});
@@ -300,8 +330,15 @@ class _HomeScreenState extends State<HomeScreen> {
       _socSaveError = null;
     });
     try {
-      final profile = widget.app.profile ?? const DriverProfile();
-      await widget.app.saveProfile(profile.copyWith(currentSoc: value));
+      final vehicle = widget.app.activeVehicle;
+      if (vehicle != null) {
+        await widget.app.driverRepository
+            .updateVehicle(vehicle.id, {'current_soc': value});
+        await widget.app.refreshVehicles();
+      } else {
+        final profile = widget.app.profile ?? const DriverProfile();
+        await widget.app.saveProfile(profile.copyWith(currentSoc: value));
+      }
     } catch (_) {
       if (mounted) {
         setState(() => _socSaveError =
@@ -2660,6 +2697,73 @@ class BookingSuccessScreen extends StatelessWidget {
                   ])))));
 }
 
+class _DeparturePicker extends StatelessWidget {
+  const _DeparturePicker({required this.value, required this.onChanged});
+  final DateTime value;
+  final ValueChanged<DateTime> onChanged;
+
+  Future<void> _chooseDate(BuildContext context) async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: value.isBefore(DateUtils.dateOnly(now))
+          ? DateUtils.dateOnly(now)
+          : value,
+      firstDate: DateUtils.dateOnly(now),
+      lastDate: DateUtils.dateOnly(now).add(const Duration(days: 365)),
+    );
+    if (picked == null || !context.mounted) return;
+    onChanged(DateTime(
+        picked.year, picked.month, picked.day, value.hour, value.minute));
+  }
+
+  Future<void> _chooseTime(BuildContext context) async {
+    final picked = await showTimePicker(
+        context: context, initialTime: TimeOfDay.fromDateTime(value));
+    if (picked == null || !context.mounted) return;
+    final candidate = DateTime(
+        value.year, value.month, value.day, picked.hour, picked.minute);
+    if (candidate
+        .isBefore(DateTime.now().subtract(const Duration(minutes: 5)))) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Choose a departure time that is now or later.')));
+      return;
+    }
+    onChanged(candidate);
+  }
+
+  @override
+  Widget build(BuildContext context) => VoltCard(
+          child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Planned departure',
+              style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 4),
+          const Text(
+              'This saves a route plan only; it does not reserve a charger.',
+              style: TextStyle(color: VoltColors.muted)),
+          Row(children: [
+            Expanded(
+                child: OutlinedButton.icon(
+              onPressed: () => _chooseDate(context),
+              icon: const Icon(Icons.calendar_today_outlined),
+              label: Text(
+                  MaterialLocalizations.of(context).formatMediumDate(value)),
+            )),
+            const SizedBox(width: 8),
+            Expanded(
+                child: OutlinedButton.icon(
+              onPressed: () => _chooseTime(context),
+              icon: const Icon(Icons.schedule),
+              label: Text(MaterialLocalizations.of(context)
+                  .formatTimeOfDay(TimeOfDay.fromDateTime(value))),
+            )),
+          ]),
+        ],
+      ));
+}
+
 class RoutePlannerScreen extends StatefulWidget {
   const RoutePlannerScreen(
       {super.key,
@@ -2679,6 +2783,7 @@ class _RoutePlannerScreenState extends State<RoutePlannerScreen> {
   late Future<Map<String, dynamic>> _route;
   double? _soc;
   bool _chargeSaved = false;
+  late DateTime _departureAt;
   bool _savingCharge = false;
   String? _chargeError;
   StreamSubscription<void>? _catalogChanges;
@@ -2687,9 +2792,16 @@ class _RoutePlannerScreenState extends State<RoutePlannerScreen> {
   @override
   void initState() {
     super.initState();
-    _soc = widget.soc ?? widget.app.profile?.currentSoc;
-    _chargeSaved = widget.app.profile?.currentSoc != null &&
-        widget.app.profile?.currentSoc == _soc;
+    _soc = widget.soc ??
+        widget.app.activeVehicle?.currentSoc ??
+        widget.app.profile?.currentSoc;
+    _departureAt = DateTime.now().add(const Duration(minutes: 10));
+    _chargeSaved = (widget.app.activeVehicle?.currentSoc ??
+                widget.app.profile?.currentSoc) !=
+            null &&
+        (widget.app.activeVehicle?.currentSoc ??
+                widget.app.profile?.currentSoc) ==
+            _soc;
     _route = _plan();
     _catalogChanges = widget.app.driverRepository
         .watchPitstopDirectoryChanges()
@@ -2720,8 +2832,10 @@ class _RoutePlannerScreenState extends State<RoutePlannerScreen> {
   }
 
   Future<Map<String, dynamic>> _plan({bool persist = true}) {
-    final battery = widget.app.profile?.batteryKwh;
-    final efficiency = widget.app.profile?.efficiencyKmPerKwh;
+    final battery =
+        widget.app.activeVehicle?.batteryKwh ?? widget.app.profile?.batteryKwh;
+    final efficiency = widget.app.activeVehicle?.efficiencyKmPerKwh ??
+        widget.app.profile?.efficiencyKmPerKwh;
     final stateOfCharge = _soc;
     if (battery == null || efficiency == null) {
       return Future.error(
@@ -2738,6 +2852,7 @@ class _RoutePlannerScreenState extends State<RoutePlannerScreen> {
       stateOfCharge: stateOfCharge,
       efficiency: efficiency,
       persist: persist,
+      departureAt: _departureAt,
     );
   }
 
@@ -2749,8 +2864,15 @@ class _RoutePlannerScreenState extends State<RoutePlannerScreen> {
       _chargeError = null;
     });
     try {
-      final profile = widget.app.profile ?? const DriverProfile();
-      await widget.app.saveProfile(profile.copyWith(currentSoc: charge));
+      final vehicle = widget.app.activeVehicle;
+      if (vehicle != null) {
+        await widget.app.driverRepository
+            .updateVehicle(vehicle.id, {'current_soc': charge});
+        await widget.app.refreshVehicles();
+      } else {
+        final profile = widget.app.profile ?? const DriverProfile();
+        await widget.app.saveProfile(profile.copyWith(currentSoc: charge));
+      }
       if (mounted) {
         setState(() {
           _chargeSaved = true;
@@ -2781,7 +2903,7 @@ class _RoutePlannerScreenState extends State<RoutePlannerScreen> {
             if (snapshot.connectionState == ConnectionState.waiting &&
                 _chargeSaved)
               return const VoltLoading(label: 'Calculating route and energy…');
-            if (!(widget.app.profile?.isComplete ?? false))
+            if (!widget.app.profileComplete)
               return Center(
                 child: Padding(
                   padding: const EdgeInsets.all(20),
@@ -2888,6 +3010,14 @@ class _RoutePlannerScreenState extends State<RoutePlannerScreen> {
             final remaining =
                 double.tryParse('${data['estimated_remaining_soc']}') ?? 0;
             return ListView(padding: const EdgeInsets.all(18), children: [
+              _DeparturePicker(
+                value: _departureAt,
+                onChanged: (value) => setState(() {
+                  _departureAt = value;
+                  _route = _plan();
+                }),
+              ),
+              const SizedBox(height: 12),
               _RoutePreview(
                   data: data,
                   origin: widget.origin,
@@ -3435,6 +3565,15 @@ class ProfileScreen extends StatelessWidget {
             value: '${profile?.efficiencyKmPerKwh ?? '—'} km/kWh')
       ])),
       const SizedBox(height: 16),
+      ListTile(
+          leading:
+              const Icon(Icons.directions_car_outlined, color: VoltColors.cyan),
+          title: Text('My vehicles (${app.vehicles.length})'),
+          subtitle:
+              Text(app.activeVehicle?.displayName ?? 'Manage saved vehicles'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.push(context,
+              MaterialPageRoute(builder: (_) => VehiclesScreen(app: app)))),
       ListTile(
           leading: const Icon(Icons.settings_outlined, color: VoltColors.cyan),
           title: const Text('Edit vehicle profile'),

@@ -22,7 +22,9 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (!loading && user && session?.access_token) {
-      resolveRole(session.access_token).then((destination) => router.replace(destination));
+      resolveRole(session.access_token)
+        .then((destination) => router.replace(destination))
+        .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Your VoltStop role could not be verified."));
     }
   }, [loading, router, session?.access_token, user]);
 

@@ -22,6 +22,7 @@ from app.payments.router import router as payments_router
 from app.routes.router import router as routes_router
 from app.slots.router import router as slots_router
 from app.users.router import router as profile_router
+from app.vehicles.router import router as vehicles_router
 from app.vendors.router import router as vendors_router
 from app.vendors.portal_router import router as vendor_portal_router
 from app.admin.router import router as admin_router
@@ -70,9 +71,15 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.vendor_portal_origin],
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PATCH", "PUT", "OPTIONS"],
-    allow_headers=["Accept", "Authorization", "Content-Type"],
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Accept", "Authorization", "Content-Type", "Idempotency-Key"],
 )
+
+
+@app.get("/", include_in_schema=False)
+async def root_status() -> dict[str, Any]:
+    """Provide a minimal deployment status at the API host root."""
+    return success({"status": "healthy"}, "VoltStop API is ready")
 
 
 @app.exception_handler(ApiError)
@@ -122,6 +129,7 @@ async def health() -> dict[str, Any]:
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(profile_router, prefix="/api/v1")
+app.include_router(vehicles_router, prefix="/api/v1")
 app.include_router(vendors_router, prefix="/api/v1")
 app.include_router(vendor_portal_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")

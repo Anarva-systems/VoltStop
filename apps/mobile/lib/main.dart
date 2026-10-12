@@ -14,6 +14,12 @@ import 'repositories/driver_repository.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setSystemUIOverlayStyle(voltSystemUiOverlayStyle);
+  final apiConfigError = AppConfig.apiConfigurationError;
+  if (AppConfig.appEnvironment.toLowerCase() == 'production' &&
+      apiConfigError != null) {
+    runApp(_ApiConfigurationError(message: apiConfigError));
+    return;
+  }
   if (AppConfig.hasSupabase) {
     await Supabase.initialize(
       url: AppConfig.supabaseUrl,
@@ -138,5 +144,22 @@ class _ProfileRecoveryScreen extends StatelessWidget {
                           },
                           child: const Text('Sign out')),
                     ]))))),
+      );
+}
+
+class _ApiConfigurationError extends StatelessWidget {
+  const _ApiConfigurationError({required this.message});
+  final String message;
+  @override
+  Widget build(BuildContext context) => MaterialApp(
+        home: Scaffold(
+            body: SafeArea(
+                child: Center(
+                    child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+              'VoltStop is not configured for secure service access. $message',
+              textAlign: TextAlign.center),
+        )))),
       );
 }

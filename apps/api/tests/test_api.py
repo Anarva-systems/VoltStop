@@ -68,6 +68,8 @@ class FakeDatabase:
             "amount_inr": Decimal("350.00"),
         }
         self.saved_routes = []
+        self.vehicle_rows = {}
+        self.vehicle_idempotency = {}
         self.pool = FakeAdminPool()
 
     async def vendor_id_for_owner(self, owner_id):
@@ -89,6 +91,49 @@ class FakeDatabase:
             return None
         self.profile_record.update(updates)
         return self.profile_record
+
+    async def driver_vehicles(self, user_id):
+        return list(self.vehicle_rows.get(user_id, {}).values())
+
+    async def driver_vehicle(self, user_id, vehicle_id):
+        return self.vehicle_rows.get(user_id, {}).get(vehicle_id)
+
+    async def create_driver_vehicle(self, user_id, values, idempotency_key):
+        replay = self.vehicle_idempotency.get((user_id, idempotency_key))
+        if replay is not None:
+            if replay["make"] != values["make"] or replay["model"] != values["model"]:
+                raise ApiError(409, "IDEMPOTENCY_KEY_REUSED", "This key was used for another vehicle")
+            return replay
+        rows = self.vehicle_rows.setdefault(user_id, {})
+        is_default = bool(values.get("is_default")) or not any(row["is_default"] for row in rows.values())
+        if is_default:
+            for row in rows.values(): row["is_default"] = False
+        row = {**values, "id": uuid4(), "user_id": user_id, "is_default": is_default}
+        rows[row["id"]] = row
+        self.vehicle_idempotency[(user_id, idempotency_key)] = row
+        return row
+
+    async def patch_driver_vehicle(self, user_id, vehicle_id, changes):
+        row = self.vehicle_rows.get(user_id, {}).get(vehicle_id)
+        if row is None: return None
+        if changes.get("is_default"):
+            for item in self.vehicle_rows[user_id].values(): item["is_default"] = False
+        row.update(changes)
+        return row
+
+    async def select_default_driver_vehicle(self, user_id, vehicle_id):
+        row = self.vehicle_rows.get(user_id, {}).get(vehicle_id)
+        if row is None: return None
+        for item in self.vehicle_rows[user_id].values(): item["is_default"] = False
+        row["is_default"] = True
+        return row
+
+    async def delete_driver_vehicle(self, user_id, vehicle_id):
+        row = self.vehicle_rows.get(user_id, {}).pop(vehicle_id, None)
+        if row is None: return False
+        if row["is_default"] and self.vehicle_rows[user_id]:
+            next(iter(self.vehicle_rows[user_id].values()))["is_default"] = True
+        return True
 
     async def save_driver_route(self, user_id, request, route):
         route_id = uuid4()
@@ -510,6 +555,62 @@ def test_invalid_supabase_token_is_401():
 
     import asyncio
     asyncio.run(run())
+
+
+def test_vehicle_crud_is_authenticated_and_owner_scoped(context):
+    payload = {
+        "make": "Tata", "model": "Nexon EV", "vehicle_type": "suv",
+        "battery_kwh": 40.5, "efficiency_km_per_kwh": 6.1,
+        "current_soc": 63, "connector_compatibility": ["CCS2"],
+    }
+    created = context.client.post("/api/v1/vehicles", json=payload,
+                                  headers={"Idempotency-Key": "vehicle-create-key-001"})
+    assert created.status_code == 200
+    vehicle_id = created.json()["data"]["id"]
+    assert created.json()["data"]["is_default"] is True
+    assert created.json()["data"]["current_soc"] == 63
+    assert context.client.get("/api/v1/vehicles").json()["data"][0]["id"] == vehicle_id
+    assert context.client.get(f"/api/v1/vehicles/{vehicle_id}").status_code == 200
+
+    updated = context.client.patch(f"/api/v1/vehicles/{vehicle_id}", json={"current_soc": 54})
+    assert updated.status_code == 200
+    assert updated.json()["data"]["current_soc"] == 54
+
+    override = app.dependency_overrides.pop(get_current_user)
+    async def other_user():
+        return AuthenticatedUser(id=OTHER_USER_ID)
+    app.dependency_overrides[get_current_user] = other_user
+    try:
+        assert context.client.get(f"/api/v1/vehicles/{vehicle_id}").status_code == 404
+        assert context.client.patch(f"/api/v1/vehicles/{vehicle_id}", json={"model": "attacker"}).status_code == 404
+        assert context.client.delete(f"/api/v1/vehicles/{vehicle_id}").status_code == 404
+        assert context.client.get("/api/v1/vehicles").json()["data"] == []
+    finally:
+        app.dependency_overrides[get_current_user] = override
+
+    assert context.client.delete(f"/api/v1/vehicles/{vehicle_id}").json()["data"]["deleted"] is True
+
+
+def test_vehicle_create_requires_idempotency_and_validates_data(context):
+    payload = {"make": "Tata", "model": "EV", "battery_kwh": 40, "efficiency_km_per_kwh": 6}
+    assert context.client.post("/api/v1/vehicles", json=payload).status_code == 400
+    assert context.client.post("/api/v1/vehicles", json={**payload, "battery_kwh": 0},
+                               headers={"Idempotency-Key": "vehicle-invalid-key"}).status_code == 422
+
+
+def test_vehicle_create_is_idempotent_and_default_selection_is_per_user(context):
+    payload = {"make": "Tata", "model": "EV", "battery_kwh": 40, "efficiency_km_per_kwh": 6}
+    headers = {"Idempotency-Key": "vehicle-create-key-002"}
+    first = context.client.post("/api/v1/vehicles", json=payload, headers=headers)
+    replay = context.client.post("/api/v1/vehicles", json=payload, headers=headers)
+    assert first.json()["data"]["id"] == replay.json()["data"]["id"]
+    second = context.client.post("/api/v1/vehicles", json={**payload, "model": "Second"},
+                                 headers={"Idempotency-Key": "vehicle-create-key-003"})
+    assert second.status_code == 200
+    assert second.json()["data"]["is_default"] is False
+    selected = context.client.post(f"/api/v1/vehicles/{second.json()['data']['id']}/default")
+    assert selected.status_code == 200 and selected.json()["data"]["is_default"] is True
+    assert sum(row["is_default"] for row in context.database.vehicle_rows[USER_ID].values()) == 1
 
 
 def test_profile_get_and_patch(context):
@@ -1100,6 +1201,36 @@ def test_route_plan_persists_under_authenticated_driver(context):
     user_id, request, _, _ = context.database.saved_routes[0]
     assert user_id == USER_ID
     assert request.current_soc == 75
+
+
+def test_route_departure_time_is_timezone_aware_and_persisted(context):
+    app.dependency_overrides[route_service] = lambda: PilotRouteService(FakeRouteProvider())
+    departure = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+    response = context.client.post("/api/v1/routes/plan", json={
+        "origin": "Srikakulam", "destination": "Vijayawada",
+        "battery_kwh": 60, "current_soc": 75,
+        "efficiency_km_per_kwh": 6, "persist": True,
+        "departure_at": departure,
+    })
+    assert response.status_code == 200
+    assert response.json()["data"]["departure_at"].endswith("+00:00")
+    assert context.database.saved_routes[-1][1].departure_at is not None
+
+    naive = context.client.post("/api/v1/routes/plan", json={
+        "origin": "Srikakulam", "destination": "Vijayawada",
+        "battery_kwh": 60, "current_soc": 75,
+        "efficiency_km_per_kwh": 6, "persist": False,
+        "departure_at": "2020-01-01T12:00:00",
+    })
+    assert naive.status_code == 422
+
+
+def test_vehicle_routes_require_authentication(context):
+    override = app.dependency_overrides.pop(get_current_user)
+    try:
+        assert context.client.get("/api/v1/vehicles").status_code == 401
+    finally:
+        app.dependency_overrides[get_current_user] = override
 
 
 def test_route_service_rejects_non_pilot_route():

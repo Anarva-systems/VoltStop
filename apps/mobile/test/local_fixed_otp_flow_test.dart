@@ -10,6 +10,7 @@ import 'package:voltstop_mobile/features/auth/views/auth_screens.dart';
 import 'package:voltstop_mobile/features/driver/views/driver_screens.dart';
 import 'package:voltstop_mobile/models/booking.dart';
 import 'package:voltstop_mobile/models/driver_profile.dart';
+import 'package:voltstop_mobile/models/driver_vehicle.dart';
 import 'package:voltstop_mobile/models/pitstop.dart';
 import 'package:voltstop_mobile/repositories/auth_repository.dart';
 import 'package:voltstop_mobile/repositories/driver_repository.dart';
@@ -239,7 +240,7 @@ class _FixedOtpAuth extends AuthRepository {
 
 class _ProfileOnlyDriverRepository extends DriverRepository {
   _ProfileOnlyDriverRepository()
-    : super(ApiClient(accessToken: () async => null));
+      : super(ApiClient(accessToken: () async => null));
 
   int profileReads = 0;
   int routePlanCalls = 0;
@@ -249,7 +250,8 @@ class _ProfileOnlyDriverRepository extends DriverRepository {
     double lat = 17.0,
     double lng = 81.8,
     double radiusKm = 200,
-  }) async => [];
+  }) async =>
+      [];
 
   @override
   Future<List<Booking>> bookings() async => [];
@@ -265,10 +267,14 @@ class _ProfileOnlyDriverRepository extends DriverRepository {
     required double stateOfCharge,
     required double efficiency,
     bool persist = true,
+    DateTime? departureAt,
   }) async {
     routePlanCalls++;
     return <String, dynamic>{};
   }
+
+  @override
+  Future<List<DriverVehicle>> vehicles() async => const [];
 
   @override
   Future<DriverProfile> profile() async {

@@ -1,8 +1,8 @@
 import type { ApiFailure, ApiSuccess } from "@/types/api";
-
-const apiBaseUrl = (process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000/api/v1").replace(/\/$/, "");
+import { getApiBaseUrl } from "@/services/api-config";
 
 export async function vendorApi<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
+  const apiBaseUrl = getApiBaseUrl();
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
   headers.set("Authorization", `Bearer ${token}`);
@@ -24,6 +24,7 @@ export async function vendorApi<T>(path: string, token: string, init: RequestIni
 }
 
 export async function userApi<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
+  const apiBaseUrl = getApiBaseUrl();
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
   headers.set("Authorization", `Bearer ${token}`);

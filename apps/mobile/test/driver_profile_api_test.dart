@@ -142,6 +142,30 @@ void main() {
     await supabase.dispose();
   });
 
+  test('route planner sends the selected departure as UTC ISO-8601', () async {
+    final adapter = _RouteApiAdapter();
+    final api = ApiClient(accessToken: () async => 'verified-access-token');
+    api.dio.httpClientAdapter = adapter;
+    final repository = DriverRepository(api);
+    final departure = DateTime.utc(2027, 1, 2, 3, 4);
+
+    await repository.planRoute(
+      origin: 'Srikakulam',
+      destination: 'Vijayawada',
+      batteryKwh: 60,
+      stateOfCharge: 75,
+      efficiency: 6.2,
+      persist: true,
+      departureAt: departure,
+    );
+
+    final body = adapter.requests.single.data is String
+        ? jsonDecode(adapter.requests.single.data as String)
+            as Map<String, dynamic>
+        : Map<String, dynamic>.from(adapter.requests.single.data as Map);
+    expect(DateTime.parse(body['departure_at'] as String).toUtc(), departure);
+  });
+
   test('nearby discovery defaults to the NH-16 pilot start location', () async {
     final adapter = _DirectoryApiAdapter();
     final api = ApiClient(accessToken: () async => 'verified-access-token');

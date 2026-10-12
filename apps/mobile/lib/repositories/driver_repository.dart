@@ -5,6 +5,7 @@ import '../core/config/app_config.dart';
 import '../core/services/api_client.dart';
 import '../models/booking.dart';
 import '../models/driver_profile.dart';
+import '../models/driver_vehicle.dart';
 import '../models/pitstop.dart';
 
 class DriverRepository {
@@ -56,9 +57,10 @@ class DriverRepository {
     required double stateOfCharge,
     required double efficiency,
     bool persist = true,
+    DateTime? departureAt,
   }) async {
     _validateRouteInputs(batteryKwh, stateOfCharge, efficiency);
-    final result = await _api.post(
+    return Map<String, dynamic>.from(await _api.post(
       '/routes/plan',
       data: {
         'origin': origin,
@@ -67,12 +69,65 @@ class DriverRepository {
         'current_soc': stateOfCharge,
         'efficiency_km_per_kwh': efficiency,
         'persist': persist,
+        if (departureAt != null)
+          'departure_at': departureAt.toUtc().toIso8601String(),
       },
-    );
-    if (result is! Map) {
-      throw const FormatException('Route response is invalid.');
-    }
-    return Map<String, dynamic>.from(result);
+    ) as Map);
+  }
+
+  Future<List<DriverVehicle>> vehicles() async {
+    final result = await _api.get('/vehicles');
+    if (result is! List)
+      throw const FormatException('Vehicles response is invalid.');
+    return result
+        .whereType<Map>()
+        .map((item) => DriverVehicle.fromJson(
+              Map<String, dynamic>.from(item),
+            ))
+        .toList();
+  }
+
+  Future<DriverVehicle> createVehicle({
+    required String make,
+    required String model,
+    required String vehicleType,
+    required double batteryKwh,
+    required double efficiencyKmPerKwh,
+    double? currentSoc,
+    List<String> connectorCompatibility = const [],
+    bool isDefault = false,
+  }) async {
+    final key = 'mobile-${DateTime.now().microsecondsSinceEpoch}';
+    return DriverVehicle.fromJson(Map<String, dynamic>.from(await _api.post(
+      '/vehicles',
+      data: {
+        'make': make.trim(),
+        'model': model.trim(),
+        'vehicle_type': vehicleType,
+        'battery_kwh': batteryKwh,
+        'efficiency_km_per_kwh': efficiencyKmPerKwh,
+        'current_soc': currentSoc,
+        'connector_compatibility': connectorCompatibility,
+        'is_default': isDefault,
+      },
+      headers: {'Idempotency-Key': key},
+    ) as Map));
+  }
+
+  Future<DriverVehicle> updateVehicle(
+          String id, Map<String, dynamic> changes) async =>
+      DriverVehicle.fromJson(Map<String, dynamic>.from(await _api.patch(
+        '/vehicles/$id',
+        data: changes,
+      ) as Map));
+
+  Future<DriverVehicle> selectDefaultVehicle(String id) async =>
+      DriverVehicle.fromJson(Map<String, dynamic>.from(await _api.post(
+        '/vehicles/$id/default',
+      ) as Map));
+
+  Future<void> deleteVehicle(String id) async {
+    await _api.delete('/vehicles/$id');
   }
 
   Future<List<Pitstop>> nearbyPitstops({
@@ -85,7 +140,7 @@ class DriverRepository {
       query: {'lat': lat, 'lng': lng, 'radius_km': radiusKm},
     );
     if (result is! List) {
-      throw const FormatException('Nearby-vendor response is invalid.');
+      throw const FormatException('Nearby places response is invalid.');
     }
     return result
         .whereType<Map>()
@@ -96,7 +151,7 @@ class DriverRepository {
   Future<Pitstop> pitstop(String id) async {
     final result = await _api.get('/vendors/$id');
     if (result is! Map) {
-      throw const FormatException('Pitstop response is invalid.');
+      throw const FormatException('Place details response is invalid.');
     }
     return Pitstop.fromJson(Map<String, dynamic>.from(result));
   }
@@ -104,7 +159,7 @@ class DriverRepository {
   Future<List<Map<String, dynamic>>> slots(String vendorId) async {
     final result = await _api.get('/vendors/$vendorId/slots');
     if (result is! List) {
-      throw const FormatException('Charging-slots response is invalid.');
+      throw const FormatException('Charging slots response is invalid.');
     }
     return result
         .whereType<Map>()
@@ -112,8 +167,6 @@ class DriverRepository {
         .toList();
   }
 
-  // Slot locks and booking writes remain on the trusted server path: it checks
-  // capacity transactionally and creates the Razorpay order with server secrets.
   Future<Map<String, dynamic>> lockSlot(String slotId) async =>
       Map<String, dynamic>.from(
         await _api.post('/bookings/lock', data: {'slot_id': slotId}) as Map,

@@ -88,6 +88,190 @@ class Database:
             row = await connection.fetchrow(sql, *values)
         return _record_value(row)
 
+    async def driver_vehicles(self, user_id: UUID) -> list[dict[str, Any]]:
+        async with self.pool.acquire() as connection:
+            rows = await connection.fetch(
+                """select id,user_id,make,model,vehicle_type,battery_kwh,efficiency_km_per_kwh,
+                          current_soc,connector_compatibility,is_default,created_at,updated_at
+                   from public.driver_vehicles where user_id=$1
+                   order by is_default desc,created_at,id""", user_id,
+            )
+        return [_record_value(row) or {} for row in rows]
+
+    async def driver_vehicle(self, user_id: UUID, vehicle_id: UUID) -> dict[str, Any] | None:
+        async with self.pool.acquire() as connection:
+            row = await connection.fetchrow(
+                """select id,user_id,make,model,vehicle_type,battery_kwh,efficiency_km_per_kwh,
+                          current_soc,connector_compatibility,is_default,created_at,updated_at
+                   from public.driver_vehicles where user_id=$1 and id=$2""", user_id, vehicle_id,
+            )
+        return _record_value(row)
+
+    async def create_driver_vehicle(self, user_id: UUID, values: dict[str, Any], idempotency_key: str) -> dict[str, Any]:
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                await connection.fetchrow("select id from public.profiles where id=$1 for update", user_id)
+                replay = await connection.fetchrow(
+                    "select * from public.driver_vehicles where user_id=$1 and idempotency_key=$2",
+                    user_id, idempotency_key,
+                )
+                if replay is not None:
+                    comparable = (replay["make"], replay["model"], replay["vehicle_type"],
+                                  float(replay["battery_kwh"]), float(replay["efficiency_km_per_kwh"]),
+                                  float(replay["current_soc"]) if replay["current_soc"] is not None else None,
+                                  list(replay["connector_compatibility"] or []))
+                    requested = (values["make"], values["model"], values["vehicle_type"],
+                                 float(values["battery_kwh"]), float(values["efficiency_km_per_kwh"]),
+                                 values.get("current_soc"), values.get("connector_compatibility", []))
+                    if comparable != requested:
+                        raise ApiError(409, "IDEMPOTENCY_KEY_REUSED", "This key was used for a different vehicle")
+                    row = replay
+                else:
+                    has_default = await connection.fetchval(
+                        "select exists(select 1 from public.driver_vehicles where user_id=$1 and is_default)", user_id
+                    )
+                    make_default = bool(values.get("is_default")) or not has_default
+                    if make_default:
+                        await connection.execute("update public.driver_vehicles set is_default=false where user_id=$1", user_id)
+                    row = await connection.fetchrow(
+                        """insert into public.driver_vehicles
+                             (user_id,make,model,vehicle_type,battery_kwh,efficiency_km_per_kwh,current_soc,
+                              connector_compatibility,is_default,idempotency_key)
+                           values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                           returning id,user_id,make,model,vehicle_type,battery_kwh,efficiency_km_per_kwh,
+                                     current_soc,connector_compatibility,is_default,created_at,updated_at""",
+                        user_id, values["make"], values["model"], values["vehicle_type"], Decimal(str(values["battery_kwh"])),
+                        Decimal(str(values["efficiency_km_per_kwh"])), Decimal(str(values["current_soc"])) if values.get("current_soc") is not None else None,
+                        values.get("connector_compatibility", []), make_default, idempotency_key,
+                    )
+                    if make_default:
+                        await connection.execute(
+                            """update public.profiles set car_model=$2,battery_kwh=$3,
+                                      default_efficiency_km_per_kwh=$4,current_soc=$5,updated_at=now() where id=$1""",
+                            user_id, f"{values['make']} {values['model']}", Decimal(str(values["battery_kwh"])),
+                            Decimal(str(values["efficiency_km_per_kwh"])), Decimal(str(values["current_soc"])) if values.get("current_soc") is not None else None,
+                        )
+        return _record_value(row) or {}
+
+    async def patch_driver_vehicle(self, user_id: UUID, vehicle_id: UUID, changes: dict[str, Any]) -> dict[str, Any] | None:
+        allowed = {"make", "model", "vehicle_type", "battery_kwh", "efficiency_km_per_kwh", "current_soc", "connector_compatibility"}
+        updates = {key: value for key, value in changes.items() if key in allowed}
+        for key in ("battery_kwh", "efficiency_km_per_kwh", "current_soc"):
+            if key in updates and updates[key] is not None:
+                updates[key] = Decimal(str(updates[key]))
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                await connection.fetchrow("select id from public.profiles where id=$1 for update", user_id)
+                current = await connection.fetchrow(
+                    "select id,is_default from public.driver_vehicles where user_id=$1 and id=$2 for update",
+                    user_id, vehicle_id,
+                )
+                if current is None:
+                    return None
+                if changes.get("is_default") is True:
+                    await connection.execute("update public.driver_vehicles set is_default=false where user_id=$1", user_id)
+                elif changes.get("is_default") is False and current["is_default"]:
+                    other = await connection.fetchval(
+                        "select exists(select 1 from public.driver_vehicles where user_id=$1 and id<>$2)", user_id, vehicle_id
+                    )
+                    if not other:
+                        raise ApiError(409, "DEFAULT_VEHICLE_REQUIRED", "Add or select another vehicle before clearing the default")
+                    replacement = await connection.fetchval(
+                        "select id from public.driver_vehicles where user_id=$1 and id<>$2 order by created_at,id limit 1",
+                        user_id, vehicle_id,
+                    )
+                    await connection.execute("update public.driver_vehicles set is_default=true where id=$1", replacement)
+                if changes.get("is_default") is not None:
+                    updates["is_default"] = bool(changes["is_default"])
+                if updates:
+                    assignments = ",".join(f"{key}=${index}" for index, key in enumerate(updates, 1))
+                    values = list(updates.values()) + [vehicle_id, user_id]
+                    row = await connection.fetchrow(
+                        f"""update public.driver_vehicles set {assignments},updated_at=now()
+                            where id=${len(values)-1} and user_id=${len(values)}
+                            returning id,user_id,make,model,vehicle_type,battery_kwh,efficiency_km_per_kwh,
+                                      current_soc,connector_compatibility,is_default,created_at,updated_at""", *values,
+                    )
+                else:
+                    row = await connection.fetchrow(
+                        """select id,user_id,make,model,vehicle_type,battery_kwh,efficiency_km_per_kwh,
+                                  current_soc,connector_compatibility,is_default,created_at,updated_at
+                           from public.driver_vehicles where id=$1 and user_id=$2""", vehicle_id, user_id,
+                    )
+                if row and row["is_default"]:
+                    await connection.execute(
+                        """update public.profiles set car_model=$2,battery_kwh=$3,
+                                  default_efficiency_km_per_kwh=$4,current_soc=$5,updated_at=now() where id=$1""",
+                        user_id, f"{row['make']} {row['model']}", row["battery_kwh"],
+                        row["efficiency_km_per_kwh"], row["current_soc"],
+                    )
+                elif changes.get("is_default") is False:
+                    replacement = await connection.fetchrow(
+                        """select make,model,battery_kwh,efficiency_km_per_kwh,current_soc
+                           from public.driver_vehicles where user_id=$1 and is_default limit 1""", user_id,
+                    )
+                    if replacement is not None:
+                        await connection.execute(
+                            """update public.profiles set car_model=$2,battery_kwh=$3,
+                                      default_efficiency_km_per_kwh=$4,current_soc=$5,updated_at=now() where id=$1""",
+                            user_id, f"{replacement['make']} {replacement['model']}", replacement["battery_kwh"],
+                            replacement["efficiency_km_per_kwh"], replacement["current_soc"],
+                        )
+        return _record_value(row)
+
+    async def select_default_driver_vehicle(self, user_id: UUID, vehicle_id: UUID) -> dict[str, Any] | None:
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                await connection.fetchrow("select id from public.profiles where id=$1 for update", user_id)
+                selected = await connection.fetchrow(
+                    """select id,user_id,make,model,vehicle_type,battery_kwh,efficiency_km_per_kwh,
+                              current_soc,connector_compatibility,is_default,created_at,updated_at
+                       from public.driver_vehicles where user_id=$1 and id=$2 for update""", user_id, vehicle_id,
+                )
+                if selected is None:
+                    return None
+                await connection.execute("update public.driver_vehicles set is_default=false where user_id=$1", user_id)
+                row = await connection.fetchrow(
+                    """update public.driver_vehicles set is_default=true,updated_at=now()
+                       where id=$1 and user_id=$2
+                       returning id,user_id,make,model,vehicle_type,battery_kwh,efficiency_km_per_kwh,
+                                 current_soc,connector_compatibility,is_default,created_at,updated_at""",
+                    vehicle_id, user_id,
+                )
+                await connection.execute(
+                    """update public.profiles set car_model=$2,battery_kwh=$3,
+                              default_efficiency_km_per_kwh=$4,current_soc=$5,updated_at=now() where id=$1""",
+                    user_id, f"{selected['make']} {selected['model']}", selected["battery_kwh"],
+                    selected["efficiency_km_per_kwh"], selected["current_soc"],
+                )
+        return _record_value(row)
+
+    async def delete_driver_vehicle(self, user_id: UUID, vehicle_id: UUID) -> bool:
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                await connection.fetchrow("select id from public.profiles where id=$1 for update", user_id)
+                current = await connection.fetchrow(
+                    "select id,is_default from public.driver_vehicles where user_id=$1 and id=$2 for update",
+                    user_id, vehicle_id,
+                )
+                if current is None:
+                    return False
+                await connection.execute("delete from public.driver_vehicles where id=$1 and user_id=$2", vehicle_id, user_id)
+                if current["is_default"]:
+                    replacement = await connection.fetchrow(
+                        """update public.driver_vehicles set is_default=true,updated_at=now()
+                           where id=(select id from public.driver_vehicles where user_id=$1 order by created_at,id limit 1)
+                           returning make,model,battery_kwh,efficiency_km_per_kwh,current_soc""", user_id,
+                    )
+                    if replacement is not None:
+                        await connection.execute(
+                            """update public.profiles set car_model=$2,battery_kwh=$3,
+                                      default_efficiency_km_per_kwh=$4,current_soc=$5,updated_at=now() where id=$1""",
+                            user_id, f"{replacement['make']} {replacement['model']}", replacement["battery_kwh"],
+                            replacement["efficiency_km_per_kwh"], replacement["current_soc"],
+                        )
+        return True
+
     async def nearby_vendors(self, lat: float, lng: float, radius_km: float) -> list[dict[str, Any]]:
         async with self.pool.acquire() as connection:
             rows = await connection.fetch(
@@ -110,10 +294,10 @@ class Database:
             route_id = await connection.fetchval(
                 """insert into public.routes (
                      user_id, origin, destination, corridor, distance_meters, distance_source,
-                     battery_kwh, current_soc, efficiency_km_per_kwh,
+                     battery_kwh, current_soc, efficiency_km_per_kwh, departure_at,
                      estimated_consumption_kwh, estimated_remaining_soc, route_geojson
                    ) values (
-                     $1, $2, $3, 'NH-16', $4, $5, $6, $7, $8, $9, $10, $11::jsonb
+                     $1, $2, $3, 'NH-16', $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb
                    ) returning id""",
                 user_id,
                 route["origin"],
@@ -123,6 +307,7 @@ class Database:
                 request.battery_kwh,
                 request.current_soc,
                 request.efficiency_km_per_kwh,
+                request.departure_at,
                 route["estimated_consumption_kwh"],
                 route["estimated_remaining_soc"],
                 geojson,
