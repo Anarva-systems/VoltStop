@@ -17,7 +17,7 @@ from app.core.database_dependency import get_database
 from app.core.dependencies import get_redis
 from app.core.errors import ApiError
 from app.core.models import AuthenticatedUser
-from app.main import app, settings as app_settings
+from app.main import api_app, app, create_cors_application, settings as app_settings
 from app.payments.service import verify_webhook_signature
 from app.bookings.router import payment_gateway
 from app.routes.service import PilotRouteService, RouteResult
@@ -701,6 +701,73 @@ def test_vendor_cannot_access_admin_api(context):
     }
     response = context.client.get("/api/v1/admin/me", headers={"X-Admin-Role": "SUPER_ADMIN"})
     assert response.status_code == 403
+
+
+def _cors_client_for_test(preview_origins: str = ""):
+    from app.core.config import Settings
+
+    configuration = Settings(
+        _env_file=None,
+        vendor_portal_origin="https://vendor-web-xi.vercel.app",
+        vendor_portal_preview_origins=preview_origins,
+    )
+    return TestClient(
+        create_cors_application(api_app, configuration.vendor_portal_allowed_origins)
+    )
+
+
+def _cors_preflight(client, origin: str):
+    return client.options(
+        "/api/v1/admin/me",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+
+
+def test_cors_preflight_allows_authorized_production_origin():
+    origin = "https://vendor-web-xi.vercel.app"
+    client = _cors_client_for_test()
+    response = _cors_preflight(client, origin)
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == origin
+    assert "GET" in response.headers["access-control-allow-methods"]
+    allowed_headers = response.headers["access-control-allow-headers"].lower()
+    assert "authorization" in allowed_headers
+    assert "content-type" in allowed_headers
+    assert "access-control-allow-credentials" not in response.headers
+
+
+def test_cors_preflight_allows_only_explicit_vendor_preview_origin():
+    origin = "https://vendor-3ha57stx4-ashapu-lokeshs-projects.vercel.app"
+    client = _cors_client_for_test(preview_origins=origin)
+    response = _cors_preflight(client, origin)
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == origin
+    assert "authorization" in response.headers["access-control-allow-headers"].lower()
+
+
+def test_cors_preflight_rejects_unlisted_origin():
+    client = _cors_client_for_test(
+        preview_origins="https://vendor-3ha57stx4-ashapu-lokeshs-projects.vercel.app"
+    )
+    response = _cors_preflight(client, "https://evil.example")
+
+    assert response.status_code == 400
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_allowed_origin_receives_cors_header_on_protected_admin_error():
+    origin = "https://vendor-web-xi.vercel.app"
+    client = _cors_client_for_test()
+    response = client.get("/api/v1/admin/me", headers={"Origin": origin})
+
+    assert response.status_code == 401
+    assert response.headers["access-control-allow-origin"] == origin
 
 
 def test_support_admin_cannot_issue_refunds(context):

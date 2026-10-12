@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     supabase_publishable_key: str = ""
     bootstrap_admin_email: str = ""
     vendor_portal_origin: str = "http://localhost:3000"
+    vendor_portal_preview_origins: str = ""
     database_url: str = ""
     redis_url: str = "redis://localhost:6379/0"
     redis_enabled: bool = True
@@ -33,6 +34,37 @@ class Settings(BaseSettings):
     database_pool_min_size: int = 1
     database_pool_max_size: int = 10
 
+    @staticmethod
+    def _canonical_origin(value: str) -> str:
+        parsed = urlsplit(value.strip())
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+            or "*" in parsed.hostname
+        ):
+            raise ValueError("CORS origins must be explicit HTTP(S) origins without paths or wildcards")
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("CORS origin contains an invalid port") from exc
+        hostname = parsed.hostname.lower()
+        host = f"[{hostname}]" if ":" in hostname else hostname
+        return f"{parsed.scheme.lower()}://{host}{f':{port}' if port is not None else ''}"
+
+    @property
+    def vendor_portal_allowed_origins(self) -> list[str]:
+        origins = [self._canonical_origin(self.vendor_portal_origin)]
+        for raw_origin in self.vendor_portal_preview_origins.split(","):
+            origin = raw_origin.strip()
+            if origin:
+                origins.append(self._canonical_origin(origin))
+        return list(dict.fromkeys(origins))
+
     @property
     def supabase_api_key(self) -> str:
         """Return the public Supabase key used for user-scoped Auth requests."""
@@ -43,6 +75,16 @@ class Settings(BaseSettings):
         environment = self.environment.strip().lower()
         if environment not in {"development", "staging", "production"}:
             raise ValueError("ENVIRONMENT must be development, staging, or production")
+
+        preview_origins = [
+            origin.strip()
+            for origin in self.vendor_portal_preview_origins.split(",")
+            if origin.strip()
+        ]
+        for origin in preview_origins:
+            canonical = self._canonical_origin(origin)
+            if not canonical.startswith("https://"):
+                raise ValueError("VENDOR_PORTAL_PREVIEW_ORIGINS must contain HTTPS origins only")
 
         if environment == "development":
             mode = self.razorpay_mode.strip().lower()

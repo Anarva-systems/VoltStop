@@ -41,7 +41,12 @@ cannot trigger a refund.
 
 The browser vendor app sends bearer tokens to the API. Set
 `VENDOR_PORTAL_ORIGIN` to the deployed portal origin to allow its CORS requests;
-the default is `http://localhost:3000` for local development.
+the default is `http://localhost:3000` for local development. Optional
+`VENDOR_PORTAL_PREVIEW_ORIGINS` is a comma-separated exact HTTPS origin allowlist
+for approved preview deployments. Configure it in the API environment that serves
+the frontend (for this preview calling the production API, the API project's
+Production environment). Do not use wildcards or reflect request origins. CORS
+does not bypass bearer-token or admin authorization checks.
 
 ## Super Admin endpoints
 

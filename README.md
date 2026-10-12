@@ -85,7 +85,10 @@ activates them.
 For the deployed VoltStop portal, set the vendor-web project's Production
 `NEXT_PUBLIC_API_URL` to `https://api-one-nu-41.vercel.app/api/v1` before
 building. Set the API project's Production `VENDOR_PORTAL_ORIGIN` to
-`https://vendor-web-xi.vercel.app`. Keep the backend in `ENVIRONMENT=production`
+`https://vendor-web-xi.vercel.app`. If a preview portal must call the production
+API, add its exact HTTPS origin to the API project's Production
+`VENDOR_PORTAL_PREVIEW_ORIGINS` (comma-separated for multiple approved previews);
+do not use wildcard or reflected origins. Keep the backend in `ENVIRONMENT=production`
 and provide its required database, Supabase, Redis, and payment settings there;
 do not place backend credentials in the frontend project. Preview and local
 deployments should use their own API and portal origins. The web client now

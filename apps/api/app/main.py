@@ -66,23 +66,16 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         await application.state.http_client.aclose()
 
 
-app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[settings.vendor_portal_origin],
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Accept", "Authorization", "Content-Type", "Idempotency-Key"],
-)
+api_app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
 
 
-@app.get("/", include_in_schema=False)
+@api_app.get("/", include_in_schema=False)
 async def root_status() -> dict[str, Any]:
     """Provide a minimal deployment status at the API host root."""
     return success({"status": "healthy"}, "VoltStop API is ready")
 
 
-@app.exception_handler(ApiError)
+@api_app.exception_handler(ApiError)
 async def api_error_handler(_request: Request, exc: ApiError) -> JSONResponse:
     detail = exc.detail if isinstance(exc.detail, dict) else {}
     return error_response(
@@ -92,12 +85,12 @@ async def api_error_handler(_request: Request, exc: ApiError) -> JSONResponse:
     )
 
 
-@app.exception_handler(StarletteHTTPException)
+@api_app.exception_handler(StarletteHTTPException)
 async def http_error_handler(_request: Request, exc: StarletteHTTPException) -> JSONResponse:
     return error_response("HTTP_ERROR", "Request could not be completed", exc.status_code)
 
 
-@app.exception_handler(RequestValidationError)
+@api_app.exception_handler(RequestValidationError)
 async def validation_error_handler(
     _request: Request, exc: RequestValidationError
 ) -> JSONResponse:
@@ -114,7 +107,7 @@ async def validation_error_handler(
     )
 
 
-@app.exception_handler(Exception)
+@api_app.exception_handler(Exception)
 async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
     logger.exception(
         "Unhandled API error method=%s path=%s", request.method, request.url.path
@@ -122,28 +115,47 @@ async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResp
     return error_response("INTERNAL_SERVER_ERROR", "An unexpected error occurred", 500)
 
 
-@app.get("/api/v1/health", tags=["health"])
+@api_app.get("/api/v1/health", tags=["health"])
 async def health() -> dict[str, Any]:
     return success({"status": "healthy"}, "API is ready")
 
 
-app.include_router(auth_router, prefix="/api/v1")
-app.include_router(profile_router, prefix="/api/v1")
-app.include_router(vehicles_router, prefix="/api/v1")
-app.include_router(vendors_router, prefix="/api/v1")
-app.include_router(vendor_portal_router, prefix="/api/v1")
-app.include_router(admin_router, prefix="/api/v1")
-app.include_router(routes_router, prefix="/api/v1")
-app.include_router(slots_router, prefix="/api/v1")
-app.include_router(bookings_router, prefix="/api/v1")
-app.include_router(payments_router, prefix="/api/v1")
-app.include_router(disputes_router, prefix="/api/v1")
-app.include_router(hotels_router, prefix="/api/v1")
-app.include_router(vendor_hotels_router, prefix="/api/v1")
-app.include_router(restaurants_router, prefix="/api/v1")
-app.include_router(vendor_restaurants_router, prefix="/api/v1")
-app.include_router(admin_restaurant_orders_router, prefix="/api/v1")
-app.include_router(notifications_router, prefix="/api/v1")
-app.include_router(admin_portal_pages_router, prefix="/api/v1")
-app.include_router(support_router, prefix="/api/v1")
-app.include_router(admin_support_router, prefix="/api/v1")
+api_app.include_router(auth_router, prefix="/api/v1")
+api_app.include_router(profile_router, prefix="/api/v1")
+api_app.include_router(vehicles_router, prefix="/api/v1")
+api_app.include_router(vendors_router, prefix="/api/v1")
+api_app.include_router(vendor_portal_router, prefix="/api/v1")
+api_app.include_router(admin_router, prefix="/api/v1")
+api_app.include_router(routes_router, prefix="/api/v1")
+api_app.include_router(slots_router, prefix="/api/v1")
+api_app.include_router(bookings_router, prefix="/api/v1")
+api_app.include_router(payments_router, prefix="/api/v1")
+api_app.include_router(disputes_router, prefix="/api/v1")
+api_app.include_router(hotels_router, prefix="/api/v1")
+api_app.include_router(vendor_hotels_router, prefix="/api/v1")
+api_app.include_router(restaurants_router, prefix="/api/v1")
+api_app.include_router(vendor_restaurants_router, prefix="/api/v1")
+api_app.include_router(admin_restaurant_orders_router, prefix="/api/v1")
+api_app.include_router(notifications_router, prefix="/api/v1")
+api_app.include_router(admin_portal_pages_router, prefix="/api/v1")
+api_app.include_router(support_router, prefix="/api/v1")
+api_app.include_router(admin_support_router, prefix="/api/v1")
+
+
+def create_cors_application(
+    application: FastAPI, allowed_origins: list[str]
+) -> CORSMiddleware:
+    """Wrap the complete ASGI app so error responses also receive CORS headers."""
+    cors_application = CORSMiddleware(
+        app=application,
+        allow_origins=allowed_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Accept", "Authorization", "Content-Type", "Idempotency-Key"],
+    )
+    # Preserve FastAPI dependency overrides for the existing test suite.
+    cors_application.dependency_overrides = application.dependency_overrides
+    return cors_application
+
+
+app = create_cors_application(api_app, settings.vendor_portal_allowed_origins)

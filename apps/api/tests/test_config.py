@@ -40,6 +40,28 @@ def test_staging_accepts_explicit_isolated_test_configuration():
     assert settings.razorpay_mode == "test"
 
 
+def test_vendor_portal_origins_include_only_explicit_preview_origins():
+    preview = "https://vendor-3ha57stx4-ashapu-lokeshs-projects.vercel.app"
+    settings = staging_settings(
+        vendor_portal_origin="https://vendor-web-xi.vercel.app/",
+        vendor_portal_preview_origins=f" {preview}, {preview} ",
+    )
+
+    assert settings.vendor_portal_allowed_origins == [
+        "https://vendor-web-xi.vercel.app",
+        preview,
+    ]
+
+
+def test_vendor_portal_preview_origins_reject_insecure_or_broad_values():
+    with pytest.raises(ValidationError, match="HTTPS origins only"):
+        Settings(_env_file=None, vendor_portal_preview_origins="http://vendor-preview.example")
+    with pytest.raises(ValidationError, match=r"explicit HTTP\(S\) origins"):
+        Settings(_env_file=None, vendor_portal_preview_origins="https://*.vercel.app")
+    with pytest.raises(ValidationError, match=r"explicit HTTP\(S\) origins"):
+        Settings(_env_file=None, vendor_portal_preview_origins="https://vendor.example/path")
+
+
 def test_staging_accepts_supabase_publishable_key_integration_name():
     settings = staging_settings(
         supabase_anon_key="",
