@@ -523,6 +523,7 @@ def test_driver_cannot_review_hotel_refunds(context):
 def test_supabase_token_verification_uses_auth_user_endpoint():
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path.endswith("/auth/v1/user")
+        assert request.headers["apikey"] == "anon-test"
         assert request.headers["authorization"] == "Bearer signed-token-value"
         return httpx.Response(200, json={"id": str(USER_ID), "email": "a@b.test"})
 
@@ -531,6 +532,26 @@ def test_supabase_token_verification_uses_auth_user_endpoint():
             settings = get_settings().model_copy(update={
                 "supabase_url": "https://example.supabase.co",
                 "supabase_anon_key": "anon-test",
+            })
+            user = await verify_supabase_access_token("signed-token-value", client, settings)
+            assert user.id == USER_ID
+
+    import asyncio
+    asyncio.run(run())
+
+
+def test_supabase_token_verification_uses_publishable_key():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["apikey"] == "sb_publishable_test_fixture"
+        assert request.headers["authorization"] == "Bearer signed-token-value"
+        return httpx.Response(200, json={"id": str(USER_ID), "email": "a@b.test"})
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            settings = get_settings().model_copy(update={
+                "supabase_url": "https://example.supabase.co",
+                "supabase_anon_key": "",
+                "supabase_publishable_key": "sb_publishable_test_fixture",
             })
             user = await verify_supabase_access_token("signed-token-value", client, settings)
             assert user.id == USER_ID

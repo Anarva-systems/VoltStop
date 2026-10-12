@@ -12,14 +12,14 @@ async def verify_supabase_access_token(
     client: httpx.AsyncClient,
     settings: Settings,
 ) -> AuthenticatedUser:
-    if not settings.supabase_url or not settings.supabase_anon_key:
+    if not settings.supabase_url or not settings.supabase_api_key:
         raise ApiError(503, "AUTH_UNAVAILABLE", "Supabase authentication is not configured")
 
     try:
         response = await client.get(
             f"{settings.supabase_url.rstrip('/')}/auth/v1/user",
             headers={
-                "apikey": settings.supabase_anon_key,
+                "apikey": settings.supabase_api_key,
                 "Authorization": f"Bearer {access_token}",
             },
         )

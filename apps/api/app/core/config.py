@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     environment: str = "development"
     supabase_url: str = ""
     supabase_anon_key: str = ""
+    supabase_publishable_key: str = ""
     bootstrap_admin_email: str = ""
     vendor_portal_origin: str = "http://localhost:3000"
     database_url: str = ""
@@ -31,6 +32,11 @@ class Settings(BaseSettings):
     google_routes_url: str = "https://routes.googleapis.com/directions/v2:computeRoutes"
     database_pool_min_size: int = 1
     database_pool_max_size: int = 10
+
+    @property
+    def supabase_api_key(self) -> str:
+        """Return the public Supabase key used for user-scoped Auth requests."""
+        return self.supabase_publishable_key or self.supabase_anon_key
 
     @model_validator(mode="after")
     def validate_deployed_environment(self) -> "Settings":
@@ -55,7 +61,7 @@ class Settings(BaseSettings):
         expected_mode = "test" if environment == "staging" else "live"
         required = {
             "SUPABASE_URL": self.supabase_url,
-            "SUPABASE_ANON_KEY": self.supabase_anon_key,
+            "SUPABASE_ANON_KEY or SUPABASE_PUBLISHABLE_KEY": self.supabase_api_key,
             "DATABASE_URL": self.database_url,
             "REDIS_URL": self.redis_url,
             "RAZORPAY_KEY_ID": self.razorpay_key_id,

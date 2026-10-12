@@ -40,6 +40,24 @@ def test_staging_accepts_explicit_isolated_test_configuration():
     assert settings.razorpay_mode == "test"
 
 
+def test_staging_accepts_supabase_publishable_key_integration_name():
+    settings = staging_settings(
+        supabase_anon_key="",
+        supabase_publishable_key="sb_publishable_test_fixture",
+    )
+
+    assert settings.supabase_api_key == "sb_publishable_test_fixture"
+
+
+def test_supabase_publishable_key_takes_precedence_over_legacy_anon_key():
+    settings = staging_settings(
+        supabase_anon_key="legacy-anon-test-fixture",
+        supabase_publishable_key="sb_publishable_test_fixture",
+    )
+
+    assert settings.supabase_api_key == "sb_publishable_test_fixture"
+
+
 def test_staging_rejects_missing_required_configuration():
     with pytest.raises(ValidationError, match="Missing required staging/production settings"):
         Settings(_env_file=None, environment="staging")
