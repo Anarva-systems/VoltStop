@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabaseBrowserClient, supabaseBrowserConfigurationError } from "@/services/supabase";
+import { formatSupabaseAuthError, supabaseBrowserClient, supabaseBrowserConfigurationError } from "@/services/supabase";
 import { Icon } from "@/components/portal";
 
 export default function AdminLoginPage() {
@@ -19,7 +19,7 @@ export default function AdminLoginPage() {
     setBusy(true);
     const { error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
     setBusy(false);
-    if (authError) { setError(authError.message); return; }
+    if (authError) { setError(formatSupabaseAuthError(authError)); return; }
     router.replace("/admin");
   }
   return <main className="admin-login-page"><div className="admin-login-glow"/><section className="admin-login-card">

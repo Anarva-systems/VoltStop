@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/portal";
 import { useVendorAuth } from "@/components/vendor-auth";
 import { resolveRole } from "@/services/resolve-role";
-import { supabaseBrowserClient, supabaseBrowserConfigurationError } from "@/services/supabase";
+import { formatSupabaseAuthError, supabaseBrowserClient, supabaseBrowserConfigurationError } from "@/services/supabase";
 
 export default function VendorLoginPage() {
   const router = useRouter();
@@ -53,7 +53,7 @@ export default function VendorLoginPage() {
         } else setNotice("Check your email to confirm the new account, then return here to sign in.");
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "We couldn’t complete sign-in.");
+      setError(formatSupabaseAuthError(reason));
     } finally { setBusy(false); }
   }
 

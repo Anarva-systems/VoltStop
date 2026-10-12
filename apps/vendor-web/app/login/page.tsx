@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { resolveRole } from "@/services/resolve-role";
 import { Icon } from "@/components/portal";
 import { useVendorAuth } from "@/components/vendor-auth";
-import { supabaseBrowserClient, supabaseBrowserConfigurationError } from "@/services/supabase";
+import { formatSupabaseAuthError, supabaseBrowserClient, supabaseBrowserConfigurationError } from "@/services/supabase";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -45,7 +45,7 @@ export default function LoginPage() {
       router.replace(await resolveRole(data.session.access_token));
       router.refresh();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "We couldn’t complete sign-in.");
+      setError(formatSupabaseAuthError(reason));
     } finally {
       setBusy(false);
     }
@@ -72,7 +72,7 @@ export default function LoginPage() {
       if (resetError) throw resetError;
       setResetMessage("If this account exists, a password-reset email has been sent.");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not send the password-reset email.");
+      setError(formatSupabaseAuthError(reason));
     } finally {
       setResetBusy(false);
     }
