@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabaseBrowserClient } from "@/services/supabase";
+import { supabaseBrowserClient, supabaseBrowserConfigurationError } from "@/services/supabase";
 import { Icon } from "@/components/portal";
 
 export default function AdminLoginPage() {
@@ -15,7 +15,7 @@ export default function AdminLoginPage() {
   const [busy, setBusy] = useState(false);
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError("");
-    if (!supabase) { setError("Administrator sign in is not configured. Set the Supabase URL and public key."); return; }
+    if (!supabase) { setError(supabaseBrowserConfigurationError() ?? "Administrator sign in is not configured."); return; }
     setBusy(true);
     const { error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
     setBusy(false);

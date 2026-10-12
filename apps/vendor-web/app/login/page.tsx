@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { resolveRole } from "@/services/resolve-role";
 import { Icon } from "@/components/portal";
 import { useVendorAuth } from "@/components/vendor-auth";
-import { isSupabaseConfigured, supabaseBrowserClient } from "@/services/supabase";
+import { supabaseBrowserClient, supabaseBrowserConfigurationError } from "@/services/supabase";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -18,7 +18,8 @@ export default function LoginPage() {
   const [resetBusy, setResetBusy] = useState(false);
   const [resetMessage, setResetMessage] = useState("");
   const [error, setError] = useState("");
-  const configured = isSupabaseConfigured();
+  const configurationError = supabaseBrowserConfigurationError();
+  const configured = configurationError === null;
 
   useEffect(() => {
     if (!loading && user && session?.access_token) {
@@ -93,7 +94,7 @@ export default function LoginPage() {
       <button type="button" className="auth-switch auth-link-button" disabled={resetBusy || !configured} onClick={() => void sendPasswordReset()}>{resetBusy ? "Sending reset email…" : "Forgot password?"}</button>
       {error && <p role="alert" className="auth-message">{error}</p>}
       {resetMessage && <p role="status" className="auth-message auth-success-message">{resetMessage}</p>}
-      {!configured && <div className="auth-config-warning">Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to enable sign-in.</div>}
+      {!configured && <div role="status" className="auth-config-warning">Supabase sign-in is unavailable. {configurationError ?? "Check the deployment configuration."}</div>}
       <p className="auth-switch">New partner? <Link href="/vendor/login">Start a vendor profile</Link></p>
       <p className="auth-switch"><Link href="/">← VoltStop home</Link></p>
     </div></section>

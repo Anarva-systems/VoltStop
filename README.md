@@ -92,6 +92,16 @@ deployments should use their own API and portal origins. The web client now
 fails with a configuration message if a non-development build has no API URL,
 instead of silently calling localhost.
 
+For the Vercel Vendor Web project, set the Root Directory to `apps/vendor-web`
+and use the Next.js build command `npm run build`. Configure Production
+Supabase values from the same project: either use
+`NEXT_PUBLIC_SUPABASE_URL` with `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (or the
+legacy `NEXT_PUBLIC_SUPABASE_ANON_KEY`), or use the Supabase integration names
+`SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY`. The build maps only URL,
+publishable-key, and anon-key values into the browser bundle; service-role and
+secret keys are never mapped. These are build-time values, so redeploy the
+Production deployment after changing them.
+
 The same application also serves the internal administrator console at
 `http://localhost:3000/admin/login`. Admin login uses Supabase Auth, then the
 API checks `public.admin_users` and role permissions on every request. Applying
