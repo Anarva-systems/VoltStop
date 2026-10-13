@@ -6,9 +6,15 @@ This checklist describes the current persisted flows and the configuration neede
 
 1. Start PostgreSQL/Supabase and Redis using the configured services. Docker is not part of this procedure.
 2. Apply the Supabase migrations in order. In particular, the hotel reservations migration and `202610110003_restaurant_orders.sql` must be applied before hotel reservations or restaurant menus are used. The Neon mirror for the restaurant schema is `apps/api/migrations/neon/003_restaurant_orders.sql`.
-3. Start FastAPI from `apps/api` with the repository Python environment and `PYTHONPATH` set to `D:\voltstop\apps\api`, listening on port `8001`.
+3. Start FastAPI from the repository root so it reads the root `.env`; set `PYTHONPATH` to `D:\voltstop\apps\api` and listen on port `8001`:
+   ```powershell
+   $env:PYTHONPATH = 'D:\voltstop\apps\api'
+   & 'D:\voltstop\.venv\Scripts\python.exe' -m uvicorn app.main:app --host 127.0.0.1 --port 8001
+   ```
 4. Start the vendor/admin Next.js website from `apps/vendor-web` on port `3002`. The API's `VENDOR_PORTAL_ORIGIN` must match that origin.
 5. For the Android emulator, run Flutter with `--dart-define=API_BASE_URL=http://10.0.2.2:8001/api/v1`. For a physical device, use the development machine's reachable LAN address instead of `10.0.2.2`.
+
+Before a demo, check `GET /api/v1/health` for API liveness and `GET /api/v1/ready` for database readiness. The readiness endpoint returns success only after a read-only database query succeeds. A healthy liveness response alone does not confirm that live data is available.
 
 ## Prepare authorized demo records
 

@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.auth.router import router as auth_router
 from app.bookings.router import router as bookings_router
 from app.core.config import get_settings
+from app.core.dependencies import get_db_pool
 from app.core.errors import ApiError
 from app.core.responses import error_response, success
 from app.payments.router import router as payments_router
@@ -117,7 +118,35 @@ async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResp
 
 @api_app.get("/api/v1/health", tags=["health"])
 async def health() -> dict[str, Any]:
+    """Liveness probe: the API process can answer requests."""
     return success({"status": "healthy"}, "API is ready")
+
+
+@api_app.get("/api/v1/ready", tags=["health"])
+async def readiness(request: Request) -> JSONResponse:
+    """Readiness probe: the API can serve database-backed live data."""
+    try:
+        pool = await get_db_pool(request)
+        async with pool.acquire() as connection:
+            await connection.fetchval("SELECT 1")
+    except ApiError as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        return error_response(
+            str(detail.get("code", "DATABASE_UNAVAILABLE")),
+            str(detail.get("message", "Database is temporarily unavailable")),
+            exc.status_code,
+        )
+    except Exception:
+        logger.exception("Database readiness check failed")
+        return error_response(
+            "DATABASE_UNAVAILABLE",
+            "Database is temporarily unavailable",
+            503,
+        )
+    return JSONResponse(
+        status_code=200,
+        content=success({"status": "ready", "database": "connected"}, "API and database are ready"),
+    )
 
 
 api_app.include_router(auth_router, prefix="/api/v1")
