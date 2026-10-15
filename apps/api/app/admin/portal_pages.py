@@ -37,13 +37,17 @@ async def customers(_admin: Annotated[AdminContext, Depends(require_permission("
             if auth_users_ready else "'unknown'::text"
         )
         profile_email = "u.email" if auth_users_ready else "p.email"
+        profile_phone = "coalesce(nullif(u.phone,''),nullif(p.phone,''))" if auth_users_ready else "nullif(p.phone,'')"
         status_filter = (
             f"{account_status}=$2" if auth_users_ready else "($2::text is null or $2='unknown')"
         )
-        where = f"($1::text is null or p.name ilike '%'||$1||'%' or {profile_email} ilike '%'||$1||'%' or p.phone ilike '%'||$1||'%' or p.id::text ilike '%'||$1||'%') and ($2::text is null or {status_filter})"
+        # profiles is created for every Auth account, including email-only vendor
+        # and admin accounts. The Customers directory contains phone-authenticated
+        # accounts only; vendor profiles are listed from public.vendors instead.
+        where = f"{profile_phone} is not null and ($1::text is null or p.name ilike '%'||$1||'%' or {profile_email} ilike '%'||$1||'%' or {profile_phone} ilike '%'||$1||'%' or p.id::text ilike '%'||$1||'%') and ($2::text is null or {status_filter})"
         total = await conn.fetchval(f"select count(*) from public.profiles p {auth_join} where {where}", search, status)
         rows = await conn.fetch(
-            f"""select p.id,p.name,{profile_email} as email,p.phone,p.created_at,{account_status} as account_status,
+            f"""select p.id,p.name,{profile_email} as email,{profile_phone} as phone,p.created_at,{account_status} as account_status,
                       (select count(*) from public.bookings b where b.user_id=p.id) as booking_count,
                       (select count(*) from public.disputes d where d.customer_id=p.id) as complaint_count
                from public.profiles p {auth_join} where {where}
@@ -59,9 +63,10 @@ async def customer_detail(customer_id: UUID, _admin: Annotated[AdminContext, Dep
         auth_users_ready = await conn.fetchval("select to_regclass('auth.users') is not null")
         if auth_users_ready:
             profile = await conn.fetchrow(
-                """select p.id,p.name,u.email,p.phone,p.created_at,p.updated_at,u.banned_until,
+                """select p.id,p.name,u.email,coalesce(nullif(u.phone,''),nullif(p.phone,'')) as phone,p.created_at,p.updated_at,u.banned_until,
                           case when u.banned_until is not null and u.banned_until > now() then 'banned' else 'active' end as account_status
-                   from public.profiles p join auth.users u on u.id=p.id where p.id=$1""", customer_id,
+                   from public.profiles p join auth.users u on u.id=p.id
+                   where p.id=$1 and coalesce(nullif(u.phone,''),nullif(p.phone,'')) is not null""", customer_id,
             )
         else:
             # Neon stores the verified profile but delegates identity and account
@@ -69,7 +74,7 @@ async def customer_detail(customer_id: UUID, _admin: Annotated[AdminContext, Dep
             profile = await conn.fetchrow(
                 """select p.id,p.name,p.email,p.phone,p.created_at,p.updated_at,
                           null::timestamptz as banned_until,'unknown'::text as account_status
-                   from public.profiles p where p.id=$1""", customer_id,
+                   from public.profiles p where p.id=$1 and nullif(p.phone,'') is not null""", customer_id,
             )
         if not profile:
             raise ApiError(404, "CUSTOMER_NOT_FOUND", "Customer was not found")

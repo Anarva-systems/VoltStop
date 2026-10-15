@@ -125,13 +125,24 @@ class AdminRepository:
         where_sql = " and ".join(where)
         args = (search, status, vendor_type, location)
         async with self.pool.acquire() as conn:
+            auth_users_ready = await conn.fetchval("select to_regclass('auth.users') is not null")
+            owner_email = "auth_owner.email" if auth_users_ready else "owner_profile.email"
+            owner_join = (
+                "left join auth.users auth_owner on auth_owner.id=v.owner_id"
+                if auth_users_ready else
+                "left join public.profiles owner_profile on owner_profile.id=v.owner_id"
+            )
+            where[0] = f"($1::text is null or v.name ilike '%'||$1||'%' or v.address ilike '%'||$1||'%' or coalesce({owner_email},'') ilike '%'||$1||'%')"
+            where_sql = " and ".join(where)
             total = await conn.fetchval(
                 f"""select count(*) from public.vendors v left join public.vendor_onboarding o on o.vendor_id=v.id
+                    {owner_join}
                     where {where_sql}""", *args,
             )
             revenue_expression = "(select coalesce(sum(p.amount_inr),0) from public.bookings b join public.payments p on p.id=b.payment_id where b.vendor_id=v.id and p.status='captured' and p.webhook_verified)" if include_financials else "null::numeric"
             rows = await conn.fetch(
-                f"""select v.id, v.name, v.type, v.address, v.lat, v.lng, v.is_active, v.is_verified,
+                f"""select v.id, v.owner_id, coalesce({owner_email},'') as owner_email,
+                          v.name, v.type, v.address, v.lat, v.lng, v.is_active, v.is_verified,
                           coalesce(o.status, case when v.is_verified then 'approved' else 'pending' end) as verification_status,
                           coalesce(o.current_stage,'application') as current_stage,
                           coalesce(o.completed_stages,'[]'::jsonb) as completed_stages,
@@ -139,6 +150,7 @@ class AdminRepository:
                           (select count(*) from public.bookings b where b.vendor_id=v.id) as bookings,
                           {revenue_expression} as gross_revenue
                    from public.vendors v left join public.vendor_onboarding o on o.vendor_id=v.id
+                   {owner_join}
                    where {where_sql} order by v.created_at desc limit $5 offset $6""",
                 *args, limit, offset,
             )
