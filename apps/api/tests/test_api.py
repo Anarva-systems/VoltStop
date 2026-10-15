@@ -628,6 +628,44 @@ def test_customer_directory_supports_neon_without_supabase_auth_schema():
     assert "auth.users" not in pool.connection.directory_query
 
 
+def test_customer_directory_reads_email_from_supabase_auth_schema():
+    class Connection:
+        def __init__(self):
+            self.directory_query = ""
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def fetchval(self, query, *_args):
+            return True if "to_regclass('auth.users')" in query else 1
+
+        async def fetch(self, query, *_args):
+            self.directory_query = query
+            return [{"id": USER_ID, "name": "Driver", "email": "driver@example.test", "phone": None,
+                     "created_at": datetime.now(timezone.utc), "account_status": "active",
+                     "booking_count": 0, "complaint_count": 0}]
+
+    class Pool:
+        def __init__(self):
+            self.connection = Connection()
+
+        def acquire(self):
+            return self.connection
+
+    pool = Pool()
+    result = asyncio.run(customers(
+        _admin=None, database=SimpleNamespace(pool=pool), q="driver@example.test", status=None, limit=50, offset=0,
+    ))
+    assert result["success"] is True
+    assert result["data"]["items"][0]["email"] == "driver@example.test"
+    assert "join auth.users u on u.id=p.id" in pool.connection.directory_query
+    assert "u.email" in pool.connection.directory_query
+    assert "p.email" not in pool.connection.directory_query
+
+
 def test_hotel_discovery_requires_authenticated_customer(context):
     override = app.dependency_overrides.pop(get_current_user)
     try:

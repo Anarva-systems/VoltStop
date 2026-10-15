@@ -801,9 +801,12 @@ class AdminRepository:
     async def admin_users(self, limit: int, offset: int) -> dict[str, Any]:
         async with self.pool.acquire() as conn:
             total = await conn.fetchval("select count(*) from public.admin_users")
+            auth_users_ready = await conn.fetchval("select to_regclass('auth.users') is not null")
+            user_email = "auth_user.email" if auth_users_ready else "p.email"
+            auth_join = "left join auth.users auth_user on auth_user.id=u.user_id" if auth_users_ready else ""
             rows = await conn.fetch(
-                """select u.user_id,u.role_name,u.is_active,u.created_at,u.updated_at,p.email
-                   from public.admin_users u left join public.profiles p on p.id=u.user_id
+                f"""select u.user_id,u.role_name,u.is_active,u.created_at,u.updated_at,{user_email} as email
+                   from public.admin_users u left join public.profiles p on p.id=u.user_id {auth_join}
                    order by u.created_at desc limit $1 offset $2""", limit, offset,
             )
         return {"items": [row_dict(r) for r in rows], "total": total, "limit": limit, "offset": offset}

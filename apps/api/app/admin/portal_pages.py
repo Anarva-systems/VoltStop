@@ -36,13 +36,14 @@ async def customers(_admin: Annotated[AdminContext, Depends(require_permission("
             "case when u.banned_until is not null and u.banned_until > now() then 'banned' else 'active' end"
             if auth_users_ready else "'unknown'::text"
         )
+        profile_email = "u.email" if auth_users_ready else "p.email"
         status_filter = (
             f"{account_status}=$2" if auth_users_ready else "($2::text is null or $2='unknown')"
         )
-        where = "($1::text is null or p.name ilike '%'||$1||'%' or p.email ilike '%'||$1||'%' or p.phone ilike '%'||$1||'%' or p.id::text ilike '%'||$1||'%') and ($2::text is null or " + status_filter + ")"
+        where = f"($1::text is null or p.name ilike '%'||$1||'%' or {profile_email} ilike '%'||$1||'%' or p.phone ilike '%'||$1||'%' or p.id::text ilike '%'||$1||'%') and ($2::text is null or {status_filter})"
         total = await conn.fetchval(f"select count(*) from public.profiles p {auth_join} where {where}", search, status)
         rows = await conn.fetch(
-            f"""select p.id,p.name,p.email,p.phone,p.created_at,{account_status} as account_status,
+            f"""select p.id,p.name,{profile_email} as email,p.phone,p.created_at,{account_status} as account_status,
                       (select count(*) from public.bookings b where b.user_id=p.id) as booking_count,
                       (select count(*) from public.disputes d where d.customer_id=p.id) as complaint_count
                from public.profiles p {auth_join} where {where}
@@ -58,7 +59,7 @@ async def customer_detail(customer_id: UUID, _admin: Annotated[AdminContext, Dep
         auth_users_ready = await conn.fetchval("select to_regclass('auth.users') is not null")
         if auth_users_ready:
             profile = await conn.fetchrow(
-                """select p.id,p.name,p.email,p.phone,p.created_at,p.updated_at,u.banned_until,
+                """select p.id,p.name,u.email,p.phone,p.created_at,p.updated_at,u.banned_until,
                           case when u.banned_until is not null and u.banned_until > now() then 'banned' else 'active' end as account_status
                    from public.profiles p join auth.users u on u.id=p.id where p.id=$1""", customer_id,
             )
