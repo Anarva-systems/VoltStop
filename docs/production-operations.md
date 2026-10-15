@@ -37,6 +37,17 @@ include `SUPABASE_URL`, `SUPABASE_ANON_KEY` or `SUPABASE_PUBLISHABLE_KEY`,
 live payment configuration. Never send secret values through chat or include
 them in source control.
 
+For a Vercel deployment that is still using Razorpay test credentials, set
+`ENVIRONMENT=staging` and `RAZORPAY_MODE=test` in the deployment's environment
+variables. Configure `SUPABASE_URL`, `SUPABASE_ANON_KEY` (or
+`SUPABASE_PUBLISHABLE_KEY`), `DATABASE_URL`, an authenticated TLS `REDIS_URL`
+(`rediss://...`), `VENDOR_PORTAL_ORIGIN`, `RAZORPAY_KEY_ID` (`rzp_test_...`),
+and `RAZORPAY_KEY_SECRET`. Staging checkout testing does not require
+`RAZORPAY_WEBHOOK_SECRET`; leave it unset until signed webhook delivery is
+configured. The deployment fails during import if it defaults to production
+with test credentials or missing required settings. After changing variables,
+redeploy and check `/` and `/api/v1/health`, then `/api/v1/ready`.
+
 For local payment development, set `RAZORPAY_MODE=test`, `RAZORPAY_KEY_ID`,
 `RAZORPAY_KEY_SECRET`, and `RAZORPAY_WEBHOOK_SECRET` in the ignored API `.env`.
 Use Razorpay TEST values first. Configure the webhook URL against a reachable
