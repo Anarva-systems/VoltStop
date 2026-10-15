@@ -24,7 +24,7 @@ export default function VendorLoginPage() {
   useEffect(() => {
     if (loading || !user || !session?.access_token) return;
     let active = true;
-    void resolveRole(session.access_token)
+    void resolveRole(session.access_token, { allowVendorSetup: true })
       .then((destination) => { if (active) router.replace(destination); })
       .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "We couldn’t verify your VoltStop role."); });
     return () => { active = false; };
@@ -42,13 +42,13 @@ export default function VendorLoginPage() {
         const { data, error: authError } = await client.auth.signInWithPassword({ email: email.trim(), password });
         if (authError) throw authError;
         if (!data.session) throw new Error("The authenticated session was not returned. Please try again.");
-        router.replace(await resolveRole(data.session.access_token));
+        router.replace(await resolveRole(data.session.access_token, { allowVendorSetup: true }));
         router.refresh();
       } else {
         const { data, error: authError } = await client.auth.signUp({ email: email.trim(), password });
         if (authError) throw authError;
         if (data.session) {
-          router.replace(await resolveRole(data.session.access_token));
+          router.replace(await resolveRole(data.session.access_token, { allowVendorSetup: true }));
           router.refresh();
         } else setNotice("Check your email to confirm the new account, then return here to sign in.");
       }

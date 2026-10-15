@@ -43,7 +43,9 @@ export function AdminGuard({ children }: { children: React.ReactNode }) {
       if (!active) return;
       const value = reason instanceof Error ? reason : new Error("Administrator access could not be verified.");
       if ((value as Error & { status?: number }).status === 401) router.replace("/login");
-      else setError(value.message);
+      else if ((value as Error & { status?: number }).status === 403) {
+        setError("This Supabase account is signed in, but it is not assigned an active VoltStop admin role. An existing super admin must add this account under Admin Users.");
+      } else setError(value.message);
     }).finally(() => active && setChecking(false));
     return () => { active = false; };
   }, [loading, router, session?.access_token, user]);
