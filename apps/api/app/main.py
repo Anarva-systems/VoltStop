@@ -3,7 +3,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-import asyncpg
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
@@ -45,13 +44,10 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     application.state.db_pool = None
     application.state.redis = None
     try:
-        if settings.database_url:
-            application.state.db_pool = await asyncpg.create_pool(
-                settings.database_url,
-                min_size=settings.database_pool_min_size,
-                max_size=settings.database_pool_max_size,
-                command_timeout=10,
-            )
+        # Defer the first PostgreSQL connection until a route needs it. In
+        # serverless deployments a transient/unreachable database must not stop
+        # the ASGI app from starting and serving liveness endpoints. The shared
+        # pool is initialized by get_db_pool() on the first database request.
         if settings.redis_enabled and settings.redis_url:
             application.state.redis = Redis.from_url(
                 settings.redis_url,

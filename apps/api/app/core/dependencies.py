@@ -1,6 +1,8 @@
 import asyncio
 import logging
+import os
 from typing import Annotated
+from urllib.parse import urlsplit
 
 import asyncpg
 import httpx
@@ -50,11 +52,23 @@ async def get_db_pool(request: Request) -> asyncpg.Pool:
             if pool is None:
                 try:
                     settings = get_settings()
+                    # Supabase's shared transaction pooler (port 6543) does not
+                    # support prepared statements. asyncpg enables its statement
+                    # cache by default, so disable it when using that endpoint.
+                    database_port = urlsplit(database_url).port
+                    statement_cache_size = 0 if database_port == 6543 else 100
+                    serverless = os.getenv("VERCEL") == "1" or bool(os.getenv("VERCEL_ENV"))
+                    pool_max_size = (
+                        min(settings.database_pool_max_size, 1)
+                        if serverless
+                        else settings.database_pool_max_size
+                    )
                     pool = await asyncpg.create_pool(
                         database_url,
-                        min_size=settings.database_pool_min_size,
-                        max_size=settings.database_pool_max_size,
+                        min_size=min(settings.database_pool_min_size, pool_max_size),
+                        max_size=pool_max_size,
                         command_timeout=10,
+                        statement_cache_size=statement_cache_size,
                     )
                     request.app.state.db_pool = pool
                 except Exception as exc:
