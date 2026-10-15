@@ -9,6 +9,19 @@ import 'package:voltstop_mobile/models/driver_profile.dart';
 import 'package:voltstop_mobile/repositories/driver_repository.dart';
 
 void main() {
+  test('API readiness is checked anonymously before phone auth', () async {
+    final adapter = _ProfileApiAdapter();
+    final api = ApiClient(accessToken: () async => null);
+    api.dio.httpClientAdapter = adapter;
+
+    await api.checkReadiness();
+
+    expect(adapter.requests, hasLength(1));
+    expect(adapter.requests.single.method, 'GET');
+    expect(adapter.requests.single.path, endsWith('/ready'));
+    expect(adapter.requests.single.headers['Authorization'], isNull);
+  });
+
   test('driver profile load uses the authenticated backend endpoint', () async {
     final adapter = _ProfileApiAdapter();
     final api = ApiClient(accessToken: () async => 'verified-access-token');
@@ -178,6 +191,43 @@ void main() {
             as Map<String, dynamic>
         : Map<String, dynamic>.from(adapter.requests.single.data as Map);
     expect(DateTime.parse(body['departure_at'] as String).toUtc(), departure);
+  });
+
+  test(
+      'driver trips use authenticated endpoints and local calendar date filters',
+      () async {
+    final adapter = _DirectoryApiAdapter();
+    final api = ApiClient(accessToken: () async => 'verified-access-token');
+    api.dio.httpClientAdapter = adapter;
+    final repository = DriverRepository(api);
+    final departureOn = DateTime(2026, 10, 15);
+    final expectedStart = departureOn.toUtc().toIso8601String();
+    final expectedEnd = DateTime(
+      departureOn.year,
+      departureOn.month,
+      departureOn.day + 1,
+    ).toUtc().toIso8601String();
+
+    expect(await repository.driverTrips(), isEmpty);
+    expect(
+      await repository.discoverDriverTrips(
+        origin: 'Srikakulam',
+        destination: 'Vijayawada',
+        departureOn: departureOn,
+      ),
+      isEmpty,
+    );
+
+    expect(adapter.requests, hasLength(2));
+    expect(adapter.requests.first.path, endsWith('/routes/trips'));
+    expect(adapter.requests.first.queryParameters['bucket'], 'upcoming');
+    final discovery = adapter.requests.last;
+    expect(discovery.path, endsWith('/routes/trips/discover'));
+    expect(discovery.queryParameters['origin'], 'Srikakulam');
+    expect(discovery.queryParameters['destination'], 'Vijayawada');
+    expect(discovery.queryParameters['departure_from'], expectedStart);
+    expect(discovery.queryParameters['departure_before'], expectedEnd);
+    expect(discovery.headers['Authorization'], 'Bearer verified-access-token');
   });
 
   test('nearby discovery defaults to the NH-16 pilot start location', () async {

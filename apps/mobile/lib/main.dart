@@ -15,9 +15,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setSystemUIOverlayStyle(voltSystemUiOverlayStyle);
   final apiConfigError = AppConfig.apiConfigurationError;
-  if (apiConfigError != null &&
-      (AppConfig.appEnvironment.toLowerCase() == 'production' ||
-          const bool.fromEnvironment('dart.vm.product'))) {
+  if (apiConfigError != null) {
     runApp(_ApiConfigurationError(message: apiConfigError));
     return;
   }
@@ -174,6 +172,7 @@ class _ApiConfigurationError extends StatelessWidget {
 String _profileIssueLabel(String? category) => switch (category) {
       'authentication' => 'Sign-in session issue',
       'authorization' => 'Account access issue',
+      'deployment_unavailable' => 'API deployment missing',
       'not_found' => 'Profile not found',
       'server' => 'VoltStop service issue',
       'timeout' => 'Request timed out',

@@ -32,8 +32,10 @@ reuse the existing Razorpay refund service after Finance/Super Admin approval.
 No dispute endpoint modifies booking, payment, refund, or payout amounts.
 
 Read-only financial diagnostics report booking/payment/refund inconsistencies
-without repair. Payout consistency is unavailable until a payout ledger is
-implemented. Integration test preparation is in `apps/api/tests/integration`
+without repair. Payment commission snapshots support calculated settlement
+estimates, while payout consistency and transfer reconciliation remain
+unavailable until a payout ledger is implemented. Integration test preparation
+is in `apps/api/tests/integration`
 and uses opt-in environment variables in `.env.integration.example`.
 
 Never expose database, service-role, payment-secret, or webhook-secret

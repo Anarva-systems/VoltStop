@@ -1,0 +1,6 @@
+# Copy this file to key.properties and fill it with the existing VoltStop
+# Play signing keystore details. Never commit key.properties or the keystore.
+storeFile=../voltstop-release.jks
+storePassword=REPLACE_WITH_KEYSTORE_PASSWORD
+keyAlias=voltstop
+keyPassword=REPLACE_WITH_KEY_PASSWORD

@@ -1,5 +1,6 @@
 import json
 
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -22,7 +23,7 @@ def _record_value(record: asyncpg.Record | dict[str, Any] | None) -> dict[str, A
     if record is None:
         return None
     result = dict(record)
-    for key in ("vendor", "services", "available_slots", "availability", "timeline"):
+    for key in ("vendor", "services", "available_slots", "availability", "timeline", "route_plan"):
         if key in result:
             result[key] = _json_value(result[key])
     return result
@@ -33,6 +34,22 @@ class Database:
 
     def __init__(self, pool: asyncpg.Pool) -> None:
         self.pool = pool
+
+    async def user_owns_payment_order(self, order_id: str, user_id: UUID) -> bool:
+        async with self.pool.acquire() as connection:
+            return bool(await connection.fetchval(
+                """select
+                     exists(select 1 from public.payments p
+                            join public.bookings b on b.payment_id=p.id
+                            where p.razorpay_order_id=$1 and b.user_id=$2)
+                     or exists(select 1 from public.hotel_reservation_payments p
+                               join public.hotel_reservations r on r.id=p.reservation_id
+                               where p.razorpay_order_id=$1 and r.customer_id=$2)
+                     or exists(select 1 from public.restaurant_order_payments p
+                               join public.restaurant_orders o on o.id=p.order_id
+                               where p.razorpay_order_id=$1 and o.customer_id=$2)""",
+                order_id, user_id,
+            ))
 
     async def hotel_payment_for_reservation(self, reservation_id: UUID) -> dict[str, Any] | None:
         async with self.pool.acquire() as connection:
@@ -313,6 +330,302 @@ class Database:
                 geojson,
             )
         return route_id
+
+    async def _driver_trip(self, connection: asyncpg.Connection, user_id: UUID, trip_id: UUID) -> dict[str, Any] | None:
+        row = await connection.fetchrow(
+            """select t.id,t.driver_id,t.vehicle_id,t.route_id,t.origin,t.destination,
+                      t.departure_at,t.estimated_arrival_at,t.vehicle_make,t.vehicle_model,
+                      t.available_seats,t.notes,t.is_discoverable,t.status,t.started_at,
+                      t.completed_at,t.cancelled_at,t.created_at,t.updated_at,
+                      case when r.id is null then null else jsonb_build_object(
+                        'id',r.id,'corridor',r.corridor,'distance_meters',r.distance_meters,
+                        'distance_source',r.distance_source,'battery_kwh',r.battery_kwh,
+                        'current_soc',r.current_soc,'efficiency_km_per_kwh',r.efficiency_km_per_kwh,
+                        'estimated_consumption_kwh',r.estimated_consumption_kwh,
+                        'estimated_remaining_soc',r.estimated_remaining_soc,
+                        'route_geojson',r.route_geojson
+                      ) end as route_plan
+               from public.driver_trips t
+               left join public.routes r on r.id=t.route_id
+               where t.driver_id=$1 and t.id=$2""",
+            user_id,
+            trip_id,
+        )
+        return _record_value(row)
+
+    async def driver_trip(self, user_id: UUID, trip_id: UUID) -> dict[str, Any] | None:
+        async with self.pool.acquire() as connection:
+            return await self._driver_trip(connection, user_id, trip_id)
+
+    async def driver_trips(self, user_id: UUID, bucket: str = "upcoming") -> list[dict[str, Any]]:
+        async with self.pool.acquire() as connection:
+            rows = await connection.fetch(
+                """select t.id,t.driver_id,t.vehicle_id,t.route_id,t.origin,t.destination,
+                          t.departure_at,t.estimated_arrival_at,t.vehicle_make,t.vehicle_model,
+                          t.available_seats,t.notes,t.is_discoverable,t.status,t.started_at,
+                          t.completed_at,t.cancelled_at,t.created_at,t.updated_at,
+                          case when r.id is null then null else jsonb_build_object(
+                            'id',r.id,'corridor',r.corridor,'distance_meters',r.distance_meters,
+                            'distance_source',r.distance_source,'battery_kwh',r.battery_kwh,
+                            'current_soc',r.current_soc,'efficiency_km_per_kwh',r.efficiency_km_per_kwh,
+                            'estimated_consumption_kwh',r.estimated_consumption_kwh,
+                            'estimated_remaining_soc',r.estimated_remaining_soc
+                          ) end as route_plan
+                   from public.driver_trips t
+                   left join public.routes r on r.id=t.route_id
+                   where t.driver_id=$1 and (
+                     $2='all'
+                     or ($2='upcoming' and t.status in ('scheduled','in_progress')
+                         and (t.status='in_progress' or t.departure_at > now()))
+                     or ($2='past' and (t.status in ('completed','cancelled')
+                                       or (t.status='scheduled' and t.departure_at <= now())))
+                   )
+                   order by case when $2='past' then t.departure_at end desc,
+                            case when $2<>'past' then t.departure_at end asc
+                   limit 100""",
+                user_id,
+                bucket,
+            )
+        return [_record_value(row) or {} for row in rows]
+
+    async def discover_driver_trips(
+        self,
+        viewer_id: UUID,
+        origin: str | None,
+        destination: str | None,
+        departure_from: Any,
+        departure_before: Any,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        async with self.pool.acquire() as connection:
+            rows = await connection.fetch(
+                """select t.id,t.origin,t.destination,t.departure_at,t.estimated_arrival_at,
+                          t.vehicle_make,t.vehicle_model,t.available_seats,t.status,
+                          r.distance_meters,r.distance_source,r.estimated_consumption_kwh
+                   from public.driver_trips t
+                   left join public.routes r on r.id=t.route_id
+                   where t.is_discoverable and t.status='scheduled'
+                     and t.departure_at > now() and t.driver_id <> $1
+                     and ($2::text is null or lower(t.origin) like lower($2) || '%')
+                     and ($3::text is null or lower(t.destination) like lower($3) || '%')
+                     and ($4::timestamptz is null or t.departure_at >= $4)
+                     and ($5::timestamptz is null or t.departure_at < $5)
+                   order by t.departure_at asc limit $6""",
+                viewer_id,
+                origin,
+                destination,
+                departure_from,
+                departure_before,
+                limit,
+            )
+        return [_record_value(row) or {} for row in rows]
+
+    async def create_driver_trip(
+        self,
+        user_id: UUID,
+        values: dict[str, Any],
+        idempotency_key: str,
+        request_fingerprint: str,
+        route_plan: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                vehicle = await connection.fetchrow(
+                    """select id,make,model,battery_kwh,current_soc,efficiency_km_per_kwh
+                       from public.driver_vehicles
+                       where user_id=$1 and id=$2 for key share""",
+                    user_id,
+                    values["vehicle_id"],
+                )
+                if vehicle is None:
+                    raise ApiError(404, "VEHICLE_NOT_FOUND", "Choose one of your saved vehicles")
+
+                existing = await connection.fetchrow(
+                    "select id,request_fingerprint from public.driver_trips where driver_id=$1 and idempotency_key=$2",
+                    user_id,
+                    idempotency_key,
+                )
+                if existing is not None:
+                    if existing["request_fingerprint"] != request_fingerprint:
+                        raise ApiError(409, "IDEMPOTENCY_KEY_REUSED", "This request key was already used for different trip details")
+                    trip = await self._driver_trip(connection, user_id, existing["id"])
+                    return trip or {}
+
+                if values["departure_at"] <= datetime.now(timezone.utc):
+                    raise ApiError(422, "INVALID_TRIP_DATE", "A new trip must depart in the future")
+
+                trip = await connection.fetchrow(
+                    """insert into public.driver_trips
+                         (driver_id,vehicle_id,origin,destination,departure_at,estimated_arrival_at,
+                          vehicle_make,vehicle_model,available_seats,notes,is_discoverable,
+                          idempotency_key,request_fingerprint)
+                       values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                       on conflict (driver_id,idempotency_key) do nothing
+                       returning id""",
+                    user_id,
+                    vehicle["id"],
+                    values["origin"],
+                    values["destination"],
+                    values["departure_at"],
+                    values.get("estimated_arrival_at"),
+                    vehicle["make"],
+                    vehicle["model"],
+                    values["available_seats"],
+                    values.get("notes"),
+                    values["is_discoverable"],
+                    idempotency_key,
+                    request_fingerprint,
+                )
+                if trip is None:
+                    existing = await connection.fetchrow(
+                        "select id,request_fingerprint from public.driver_trips where driver_id=$1 and idempotency_key=$2",
+                        user_id,
+                        idempotency_key,
+                    )
+                    if existing is None or existing["request_fingerprint"] != request_fingerprint:
+                        raise ApiError(409, "IDEMPOTENCY_KEY_REUSED", "This request key was already used for different trip details")
+                    result = await self._driver_trip(connection, user_id, existing["id"])
+                    return result or {}
+
+                trip_id = trip["id"]
+                if route_plan is not None:
+                    geojson = json.dumps({"type": "LineString", "coordinates": route_plan["route_coordinates"]})
+                    route_id = await connection.fetchval(
+                        """insert into public.routes (
+                             user_id,origin,destination,corridor,distance_meters,distance_source,
+                             battery_kwh,current_soc,efficiency_km_per_kwh,departure_at,
+                             estimated_consumption_kwh,estimated_remaining_soc,route_geojson
+                           ) values($1,$2,$3,'NH-16',$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
+                           returning id""",
+                        user_id,
+                        route_plan["origin"],
+                        route_plan["destination"],
+                        int(round(float(route_plan["distance_km"]) * 1000)),
+                        route_plan["distance_source"],
+                        Decimal(str(vehicle["battery_kwh"])),
+                        Decimal(str(values["current_soc"])),
+                        Decimal(str(vehicle["efficiency_km_per_kwh"])),
+                        values["departure_at"],
+                        Decimal(str(route_plan["estimated_consumption_kwh"])),
+                        Decimal(str(route_plan["estimated_remaining_soc"])),
+                        geojson,
+                    )
+                    await connection.execute(
+                        "update public.driver_trips set route_id=$2 where id=$1 and driver_id=$3",
+                        trip_id,
+                        route_id,
+                        user_id,
+                    )
+                return await self._driver_trip(connection, user_id, trip_id) or {}
+
+    async def update_driver_trip(
+        self,
+        user_id: UUID,
+        trip_id: UUID,
+        values: dict[str, Any],
+        route_plan: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                current = await connection.fetchrow(
+                    """select id,status,departure_at from public.driver_trips
+                       where id=$1 and driver_id=$2 for update""",
+                    trip_id,
+                    user_id,
+                )
+                if current is None:
+                    return None
+                if current["status"] != "scheduled" or current["departure_at"] <= datetime.now(timezone.utc):
+                    raise ApiError(409, "TRIP_NOT_EDITABLE", "Only trips that are still scheduled can be edited")
+                if values["departure_at"] <= datetime.now(timezone.utc):
+                    raise ApiError(422, "INVALID_TRIP_DATE", "A trip departure must remain in the future")
+
+                vehicle = await connection.fetchrow(
+                    """select id,make,model,battery_kwh,efficiency_km_per_kwh
+                       from public.driver_vehicles where id=$1 and user_id=$2 for key share""",
+                    values["vehicle_id"],
+                    user_id,
+                )
+                if vehicle is None:
+                    raise ApiError(404, "VEHICLE_NOT_FOUND", "Choose one of your saved vehicles")
+
+                route_id = None
+                if route_plan is not None:
+                    geojson = json.dumps({"type": "LineString", "coordinates": route_plan["route_coordinates"]})
+                    route_id = await connection.fetchval(
+                        """insert into public.routes (
+                             user_id,origin,destination,corridor,distance_meters,distance_source,
+                             battery_kwh,current_soc,efficiency_km_per_kwh,departure_at,
+                             estimated_consumption_kwh,estimated_remaining_soc,route_geojson
+                           ) values($1,$2,$3,'NH-16',$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
+                           returning id""",
+                        user_id,
+                        route_plan["origin"],
+                        route_plan["destination"],
+                        int(round(float(route_plan["distance_km"]) * 1000)),
+                        route_plan["distance_source"],
+                        Decimal(str(vehicle["battery_kwh"])),
+                        Decimal(str(values["current_soc"])),
+                        Decimal(str(vehicle["efficiency_km_per_kwh"])),
+                        values["departure_at"],
+                        Decimal(str(route_plan["estimated_consumption_kwh"])),
+                        Decimal(str(route_plan["estimated_remaining_soc"])),
+                        geojson,
+                    )
+
+                await connection.execute(
+                    """update public.driver_trips set vehicle_id=$3,route_id=$4,origin=$5,destination=$6,
+                         departure_at=$7,estimated_arrival_at=$8,vehicle_make=$9,vehicle_model=$10,
+                         available_seats=$11,notes=$12,is_discoverable=$13
+                       where id=$1 and driver_id=$2""",
+                    trip_id,
+                    user_id,
+                    vehicle["id"],
+                    route_id,
+                    values["origin"],
+                    values["destination"],
+                    values["departure_at"],
+                    values.get("estimated_arrival_at"),
+                    vehicle["make"],
+                    vehicle["model"],
+                    values["available_seats"],
+                    values.get("notes"),
+                    values["is_discoverable"],
+                )
+                return await self._driver_trip(connection, user_id, trip_id)
+
+    async def transition_driver_trip(
+        self,
+        user_id: UUID,
+        trip_id: UUID,
+        target_status: str,
+    ) -> dict[str, Any] | None:
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                current = await connection.fetchrow(
+                    "select status from public.driver_trips where id=$1 and driver_id=$2 for update",
+                    trip_id,
+                    user_id,
+                )
+                if current is None:
+                    return None
+                if current["status"] == target_status:
+                    return await self._driver_trip(connection, user_id, trip_id)
+                allowed = {
+                    ("scheduled", "in_progress"): "started_at",
+                    ("in_progress", "completed"): "completed_at",
+                    ("scheduled", "cancelled"): "cancelled_at",
+                }
+                timestamp_column = allowed.get((current["status"], target_status))
+                if timestamp_column is None:
+                    raise ApiError(409, "INVALID_TRIP_TRANSITION", "This trip cannot move to that status")
+                await connection.execute(
+                    f"update public.driver_trips set status=$3,{timestamp_column}=now() where id=$1 and driver_id=$2",
+                    trip_id,
+                    user_id,
+                    target_status,
+                )
+                return await self._driver_trip(connection, user_id, trip_id)
 
     async def vendor(self, vendor_id: UUID) -> dict[str, Any] | None:
         async with self.pool.acquire() as connection:
@@ -778,17 +1091,28 @@ class Database:
         async with self.pool.acquire() as connection:
             row = await connection.fetchrow(
                 """select
-                     coalesce(sum(p.amount_inr) filter (where p.status='captured' and p.updated_at >= date_trunc('day',now())),0) as today_gross,
-                     coalesce(sum(p.amount_inr) filter (where p.status='captured' and p.updated_at >= date_trunc('week',now())),0) as week_gross,
-                     coalesce(sum(p.amount_inr) filter (where p.status='captured' and p.updated_at >= date_trunc('month',now())),0) as month_gross,
+                     coalesce(sum(p.amount_inr) filter (where p.status='captured' and p.webhook_verified and p.updated_at >= date_trunc('day',now())),0) as today_gross,
+                     coalesce(sum(p.amount_inr) filter (where p.status='captured' and p.webhook_verified and p.updated_at >= date_trunc('week',now())),0) as week_gross,
+                     coalesce(sum(p.amount_inr) filter (where p.status='captured' and p.webhook_verified and p.updated_at >= date_trunc('month',now())),0) as month_gross,
+                     coalesce(sum(c.captured_amount_inr),0) as all_time_gross,
+                     coalesce(sum(r.completed_refunds),0) as completed_refunds,
+                     coalesce(sum(round(greatest(c.captured_amount_inr-coalesce(r.completed_refunds,0),0)
+                       * c.rate_bps::numeric/10000::numeric,2)),0) as platform_fee,
+                     coalesce(sum(greatest(c.captured_amount_inr-coalesce(r.completed_refunds,0),0)
+                       - round(greatest(c.captured_amount_inr-coalesce(r.completed_refunds,0),0)
+                         * c.rate_bps::numeric/10000::numeric,2)),0) as estimated_payout,
+                     (select rate_bps from public.platform_commission_settings where id=1) as commission_rate_bps,
                      count(b.id) as total_bookings,
                      count(*) filter (where b.status='completed') as completed_bookings,
                      count(*) filter (where b.status='cancelled') as cancelled_bookings,
-                     count(*) filter (where p.status='captured') as captured_payments,
+                     count(*) filter (where p.status='captured' and p.webhook_verified) as captured_payments,
                      count(*) filter (where p.status='refunded') as refunded_payments
                    from public.vendors v
                    left join public.bookings b on b.vendor_id=v.id
                    left join public.payments p on p.id=b.payment_id
+                   left join public.payment_commission_ledger c on c.payment_id=p.id
+                   left join lateral (select coalesce(sum(rf.amount_inr),0) as completed_refunds
+                     from public.refunds rf where rf.payment_id=p.id and rf.status='completed') r on true
                    where v.id=$1 and v.owner_id=$2 group by v.id""",
                 vendor_id, owner_id,
             )

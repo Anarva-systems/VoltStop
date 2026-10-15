@@ -31,6 +31,26 @@ def json_value(value: Any) -> Any:
     return value if value is not None else {}
 
 
+async def configured_commission_rate_bps(connection: asyncpg.Connection) -> int:
+    try:
+        rate_bps = await connection.fetchval(
+            "select rate_bps from public.platform_commission_settings where id=1"
+        )
+    except asyncpg.UndefinedTableError as exc:
+        raise ApiError(
+            503,
+            "PLATFORM_COMMISSION_MIGRATION_REQUIRED",
+            "Apply the platform commission database migration before loading financial calculations",
+        ) from exc
+    if rate_bps is None:
+        raise ApiError(
+            503,
+            "PLATFORM_COMMISSION_NOT_CONFIGURED",
+            "The platform commission rate has not been configured",
+        )
+    return int(rate_bps)
+
+
 class AdminRepository:
     """Queries and state transitions used only after AdminContext authorization."""
 
@@ -50,18 +70,27 @@ class AdminRepository:
 
     async def dashboard(self) -> dict[str, Any]:
         async with self.pool.acquire() as conn:
+            commission_rate_bps = await configured_commission_rate_bps(conn)
             metrics = await conn.fetchrow(
                 """select
                   (select count(*) from public.bookings) as total_bookings,
                   (select count(*) from public.vendors where is_active and is_verified) as active_vendors,
                   (select coalesce(sum(amount_inr),0) from public.payments where status='captured' and webhook_verified) as gross_booking_value,
-                  null::numeric as platform_revenue,
+                  (select coalesce(sum(round(greatest(c.captured_amount_inr-coalesce(r.completed_refunds,0),0)
+                    * c.rate_bps::numeric/10000::numeric,2)),0)
+                   from public.payment_commission_ledger c
+                   join public.payments p on p.id=c.payment_id
+                   left join lateral (select coalesce(sum(rf.amount_inr),0) as completed_refunds
+                     from public.refunds rf where rf.payment_id=p.id and rf.status='completed') r on true
+                   where p.webhook_verified and p.status in ('captured','refunded')) as platform_revenue,
+                  $1::smallint as platform_commission_rate_bps,
                   (select count(*) from public.disputes where status not in ('resolved','closed')) as pending_disputes,
                   (select coalesce(sum(amount_inr),0) from public.refunds where status='completed') as refund_amount,
                   (select count(*) from public.bookings where created_at >= date_trunc('day',now())) as todays_bookings,
                   (select count(*) from public.vendor_onboarding where status in ('pending','under_review','changes_requested')) as pending_vendor_applications,
                   null::integer as active_routes,
-                  (select count(*) from public.disputes where status not in ('resolved','closed')) as open_disputes"""
+                  (select count(*) from public.disputes where status not in ('resolved','closed')) as open_disputes""",
+                commission_rate_bps,
             )
             bookings = await conn.fetch(
                 """select date_trunc('day',created_at)::date as period, count(*) as value
@@ -132,15 +161,29 @@ class AdminRepository:
 
     async def vendor_financials(self, vendor_id: UUID) -> dict[str, Any] | None:
         async with self.pool.acquire() as conn:
+            commission_rate_bps = await configured_commission_rate_bps(conn)
             row = await conn.fetchrow(
-                """select v.id as vendor_id,v.name,
-                          (select coalesce(sum(p.amount_inr),0) from public.bookings b join public.payments p on p.id=b.payment_id
-                           where b.vendor_id=v.id and p.status='captured' and p.webhook_verified) as gross_revenue,
-                          (select coalesce(sum(r.amount_inr),0) from public.refunds r join public.bookings b on b.id=r.booking_id
-                           where b.vendor_id=v.id and r.status='completed') as completed_refunds,
-                          null::numeric as platform_fee,null::numeric as vendor_payout,
-                          'not_implemented'::text as payout_status
-                   from public.vendors v where v.id=$1""", vendor_id,
+                """with paid as (
+                     select c.captured_amount_inr,
+                            coalesce(r.completed_refunds,0) as completed_refunds,
+                            round(greatest(c.captured_amount_inr-coalesce(r.completed_refunds,0),0)
+                              * c.rate_bps::numeric/10000::numeric,2) as platform_fee
+                     from public.bookings b
+                     join public.payments p on p.id=b.payment_id
+                     join public.payment_commission_ledger c on c.payment_id=p.id
+                     left join lateral (select coalesce(sum(rf.amount_inr),0) as completed_refunds
+                       from public.refunds rf where rf.payment_id=p.id and rf.status='completed') r on true
+                     where b.vendor_id=$1 and p.webhook_verified and p.status in ('captured','refunded')
+                   )
+                   select v.id as vendor_id,v.name,
+                          coalesce(sum(paid.captured_amount_inr),0) as gross_revenue,
+                          coalesce(sum(paid.completed_refunds),0) as completed_refunds,
+                          coalesce(sum(paid.platform_fee),0) as platform_fee,
+                          coalesce(sum(greatest(paid.captured_amount_inr-paid.completed_refunds,0)-paid.platform_fee),0) as vendor_payout,
+                          'calculated_only'::text as payout_status,
+                          $2::smallint as commission_rate_bps
+                   from public.vendors v left join paid on true
+                   where v.id=$1 group by v.id,v.name""", vendor_id, commission_rate_bps,
             )
         return row_dict(row)
 
@@ -282,33 +325,64 @@ class AdminRepository:
         where = "($1::text is null or p.razorpay_payment_id ilike '%'||$1||'%' or b.id::text ilike '%'||$1||'%') and ($2::text is null or p.status=$2) and ($3::uuid is null or b.vendor_id=$3) and ($4::timestamptz is null or p.created_at >= $4) and ($5::timestamptz is null or p.created_at < $5) and ($6::numeric is null or p.amount_inr >= $6) and ($7::numeric is null or p.amount_inr <= $7) and ($8::text is null or $8='Razorpay')"
         args = (search, status, vendor_id, start, end, minimum, maximum, provider)
         async with self.pool.acquire() as conn:
+            commission_rate_bps = await configured_commission_rate_bps(conn)
             total = await conn.fetchval(f"select count(*) from public.payments p join public.bookings b on b.payment_id=p.id where {where}", *args)
             rows = await conn.fetch(
                 f"""select p.id as transaction_id,p.razorpay_payment_id,p.status,p.amount_inr,p.currency,p.created_at,
                           b.id as booking_id,v.id as vendor_id,v.name as vendor_name,pr.name as customer_name,
-                          'Razorpay'::text as provider,null::numeric as platform_fee_inr,null::numeric as vendor_payout_inr
+                          'Razorpay'::text as provider,
+                          case when c.payment_id is not null and p.webhook_verified and p.status in ('captured','refunded')
+                            then round(greatest(c.captured_amount_inr-coalesce(r.completed_refunds,0),0)
+                              * c.rate_bps::numeric/10000::numeric,2) end as platform_fee_inr,
+                          case when c.payment_id is not null and p.webhook_verified and p.status in ('captured','refunded')
+                            then greatest(c.captured_amount_inr-coalesce(r.completed_refunds,0),0)
+                              - round(greatest(c.captured_amount_inr-coalesce(r.completed_refunds,0),0)
+                                * c.rate_bps::numeric/10000::numeric,2) end as vendor_payout_inr
                    from public.payments p join public.bookings b on b.payment_id=p.id
                    join public.vendors v on v.id=b.vendor_id join public.profiles pr on pr.id=b.user_id
+                   left join public.payment_commission_ledger c on c.payment_id=p.id
+                   left join lateral (select coalesce(sum(rf.amount_inr),0) as completed_refunds
+                     from public.refunds rf where rf.payment_id=p.id and rf.status='completed') r on true
                    where {where} order by p.created_at desc limit $9 offset $10""", *args, limit, offset,
             )
         return {"items": [row_dict(r) for r in rows], "total": total, "limit": limit, "offset": offset,
-                "fee_disclosure": "Platform commission is not configured in the database; fee and payout amounts are unavailable."}
+                "commission_rate_bps": commission_rate_bps,
+                "fee_disclosure": f"A {commission_rate_bps / 100:g}% commission calculation policy is recorded for new verified charging payments; completed refunds reduce the calculated amount. Earlier verified payments are grandfathered at 0%. This ledger does not split customer payments or send vendor payouts; the vendor amounts shown are estimates only."}
 
     async def payouts(self, limit: int, offset: int) -> dict[str, Any]:
         async with self.pool.acquire() as conn:
+            commission_rate_bps = await configured_commission_rate_bps(conn)
             total = await conn.fetchval("select count(*) from public.vendors")
             rows = await conn.fetch(
-                """select v.id as vendor_id,v.name,
-                          coalesce((select sum(p.amount_inr) from public.bookings b join public.payments p on p.id=b.payment_id
-                            where b.vendor_id=v.id and p.status='captured' and p.webhook_verified),0) as gross_revenue,
-                          coalesce((select sum(r.amount_inr) from public.refunds r join public.bookings b on b.id=r.booking_id
-                            where b.vendor_id=v.id and r.status='completed'),0) as refunds,
-                          null::numeric as platform_fee,null::numeric as calculated_payout,
-                          'not_implemented'::text as payout_status
-                   from public.vendors v order by v.name limit $1 offset $2""", limit, offset,
+                """with paid as (
+                     select b.vendor_id,c.captured_amount_inr,
+                            coalesce(r.completed_refunds,0) as completed_refunds,
+                            round(greatest(c.captured_amount_inr-coalesce(r.completed_refunds,0),0)
+                              * c.rate_bps::numeric/10000::numeric,2) as platform_fee
+                     from public.bookings b
+                     join public.payments p on p.id=b.payment_id
+                     join public.payment_commission_ledger c on c.payment_id=p.id
+                     left join lateral (select coalesce(sum(rf.amount_inr),0) as completed_refunds
+                       from public.refunds rf where rf.payment_id=p.id and rf.status='completed') r on true
+                     where p.webhook_verified and p.status in ('captured','refunded')
+                   ), settled AS (
+                     select vendor_id,sum(captured_amount_inr) as gross_revenue,
+                            sum(completed_refunds) as refunds,sum(platform_fee) as platform_fee,
+                            sum(greatest(captured_amount_inr-completed_refunds,0)-platform_fee) as calculated_payout
+                     from paid group by vendor_id
+                   )
+                   select v.id as vendor_id,v.name,
+                          coalesce(s.gross_revenue,0) as gross_revenue,
+                          coalesce(s.refunds,0) as refunds,
+                          coalesce(s.platform_fee,0) as platform_fee,
+                          coalesce(s.calculated_payout,0) as calculated_payout,
+                          'calculated_only'::text as payout_status
+                   from public.vendors v left join settled s on s.vendor_id=v.id
+                   order by v.name limit $1 offset $2""", limit, offset,
             )
         return {"items": [row_dict(row) for row in rows], "total": total, "limit": limit, "offset": offset,
-                "notice": "Calculated gross less completed refunds is informational only. No commission or automated payout ledger is configured."}
+                "commission_rate_bps": commission_rate_bps,
+                "notice": f"A {commission_rate_bps / 100:g}% commission calculation policy is recorded for new verified charging payments; completed refunds reduce the calculated amount. Earlier verified payments are grandfathered at 0%. This accounting ledger does not split customer payments or send money. Vendor balances are estimates; no payout ledger or transfer provider is connected, so nothing is marked paid or sent."}
 
     async def refunds(self, status: str | None, booking_id: UUID | None, limit: int, offset: int) -> dict[str, Any]:
         where = "($1::text is null or r.status=$1) and ($2::uuid is null or r.booking_id=$2)"

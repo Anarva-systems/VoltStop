@@ -34,6 +34,10 @@ async def get_current_user(
                 on conflict (id) do update set
                   phone = coalesce(excluded.phone, public.profiles.phone),
                   name = coalesce(nullif(excluded.name, ''), public.profiles.name)
+                where (excluded.phone is not null
+                       and public.profiles.phone is distinct from excluded.phone)
+                   or (nullif(excluded.name, '') is not null
+                       and public.profiles.name is distinct from nullif(excluded.name, ''))
                 """,
                 user.id,
                 user.phone,

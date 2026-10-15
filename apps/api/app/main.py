@@ -10,13 +10,14 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.auth.router import router as auth_router
 from app.bookings.router import router as bookings_router
 from app.core.config import get_settings
-from app.core.dependencies import get_db_pool
+from app.core.dependencies import get_db_pool, get_http_client, get_redis
 from app.core.errors import ApiError
 from app.core.responses import error_response, success
 from app.payments.router import router as payments_router
@@ -55,8 +56,8 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
             application.state.redis = Redis.from_url(
                 settings.redis_url,
                 decode_responses=True,
-                socket_connect_timeout=2,
-                socket_timeout=2,
+                socket_connect_timeout=5,
+                socket_timeout=5,
             )
         yield
     finally:
@@ -72,8 +73,8 @@ api_app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
 
 @api_app.get("/", include_in_schema=False)
 async def root_status() -> dict[str, Any]:
-    """Provide a minimal deployment status at the API host root."""
-    return success({"status": "healthy"}, "VoltStop API is ready")
+    """Expose process liveness at the API host root."""
+    return success({"status": "healthy"}, "VoltStop API process is responding")
 
 
 @api_app.exception_handler(ApiError)
@@ -119,33 +120,134 @@ async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResp
 @api_app.get("/api/v1/health", tags=["health"])
 async def health() -> dict[str, Any]:
     """Liveness probe: the API process can answer requests."""
-    return success({"status": "healthy"}, "API is ready")
+    return success({"status": "healthy"}, "API liveness check passed")
 
 
 @api_app.get("/api/v1/ready", tags=["health"])
 async def readiness(request: Request) -> JSONResponse:
-    """Readiness probe: the API can serve database-backed live data."""
+    """Readiness for core dependencies plus explicit money-movement capabilities."""
+    dependencies: dict[str, str] = {}
+    capabilities: dict[str, str] = {
+        "customer_payment_collection": "configured"
+        if settings.razorpay_key_id and settings.razorpay_key_secret
+        and settings.razorpay_mode.strip().lower() in {"test", "live"}
+        and settings.razorpay_key_id.startswith(
+            "rzp_test_" if settings.razorpay_mode.strip().lower() == "test" else "rzp_live_"
+        )
+        else "not_configured",
+        "payment_webhooks": "configured"
+        if len(settings.razorpay_webhook_secret) >= 32
+        else "not_configured",
+        "vendor_settlement_transfers": "not_configured",
+        "vendor_payout_ledger": "not_implemented",
+        "platform_commission": "not_configured",
+    }
+
     try:
         pool = await get_db_pool(request)
         async with pool.acquire() as connection:
             await connection.fetchval("SELECT 1")
+            commission_table_ready = await connection.fetchval(
+                "select to_regclass('public.platform_commission_settings') is not null"
+            )
+            commission_ledger_ready = await connection.fetchval(
+                "select to_regclass('public.payment_commission_ledger') is not null"
+            )
+            capture_trigger_ready = await connection.fetchval(
+                """select exists (
+                     select 1 from information_schema.triggers
+                     where trigger_schema='public' and event_object_table='payments'
+                       and trigger_name='payments_record_commission'
+                   )"""
+            )
+            if commission_table_ready and commission_ledger_ready and capture_trigger_ready:
+                commission_rate_bps = await connection.fetchval(
+                    "select rate_bps from public.platform_commission_settings where id=1"
+                )
+                if commission_rate_bps is not None:
+                    capabilities["platform_commission"] = "configured"
+                else:
+                    capabilities["platform_commission"] = "incomplete"
+            elif commission_table_ready or commission_ledger_ready or capture_trigger_ready:
+                capabilities["platform_commission"] = "incomplete"
     except ApiError as exc:
         detail = exc.detail if isinstance(exc.detail, dict) else {}
-        return error_response(
-            str(detail.get("code", "DATABASE_UNAVAILABLE")),
-            str(detail.get("message", "Database is temporarily unavailable")),
-            exc.status_code,
+        dependencies["database"] = (
+            "not_configured"
+            if detail.get("message") == "Database is not configured"
+            else "unavailable"
         )
     except Exception:
         logger.exception("Database readiness check failed")
-        return error_response(
-            "DATABASE_UNAVAILABLE",
-            "Database is temporarily unavailable",
-            503,
+        dependencies["database"] = "unavailable"
+    else:
+        dependencies["database"] = "reachable"
+
+    if not settings.supabase_url or not settings.supabase_api_key:
+        dependencies["supabase_auth"] = "not_configured"
+    else:
+        try:
+            http_client = await get_http_client(request)
+            response = await http_client.get(
+                f"{settings.supabase_url.rstrip('/')}/auth/v1/health",
+                headers={"apikey": settings.supabase_api_key},
+                timeout=5.0,
+            )
+        except httpx.TimeoutException:
+            dependencies["supabase_auth"] = "timeout"
+        except httpx.RequestError as exc:
+            logger.warning(
+                "Supabase Auth readiness transport failure error_type=%s",
+                type(exc).__name__,
+            )
+            dependencies["supabase_auth"] = "network_error"
+        else:
+            if response.is_success:
+                dependencies["supabase_auth"] = "reachable"
+            elif 400 <= response.status_code < 500:
+                dependencies["supabase_auth"] = "rejected"
+            else:
+                dependencies["supabase_auth"] = "provider_error"
+                logger.warning(
+                    "Supabase Auth readiness returned an error status=%s",
+                    response.status_code,
+                )
+
+    try:
+        redis_client = await get_redis(request)
+        await redis_client.ping()
+    except ApiError:
+        dependencies["redis"] = "not_configured"
+    except RedisError as exc:
+        logger.warning("Redis readiness check failed error_type=%s", type(exc).__name__)
+        dependencies["redis"] = "unavailable"
+    except Exception:
+        logger.exception("Redis readiness check failed")
+        dependencies["redis"] = "unavailable"
+    else:
+        dependencies["redis"] = "reachable"
+
+    if any(status != "reachable" for status in dependencies.values()):
+        logger.warning("API readiness failed dependencies=%s", dependencies)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "success": False,
+                "error": {
+                    "code": "DEPENDENCIES_UNAVAILABLE",
+                    "message": "One or more required services are unavailable",
+                },
+                "data": {"status": "not_ready", "dependencies": dependencies,
+                         "capabilities": capabilities},
+            },
         )
     return JSONResponse(
         status_code=200,
-        content=success({"status": "ready", "database": "connected"}, "API and database are ready"),
+        content=success(
+            {"status": "ready", "dependencies": dependencies,
+             "capabilities": capabilities},
+            "API dependencies are ready",
+        ),
     )
 
 

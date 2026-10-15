@@ -5,6 +5,7 @@ import '../core/config/app_config.dart';
 import '../core/services/api_client.dart';
 import '../models/booking.dart';
 import '../models/driver_profile.dart';
+import '../models/driver_trip.dart';
 import '../models/driver_vehicle.dart';
 import '../models/pitstop.dart';
 
@@ -14,6 +15,8 @@ class DriverRepository {
 
   final ApiClient _api;
   final SupabaseClient? _supabase;
+
+  Future<void> checkApiReadiness() => _api.checkReadiness();
 
   SupabaseClient get _database {
     final client = _supabase;
@@ -79,6 +82,143 @@ class DriverRepository {
       },
     ) as Map);
   }
+
+  Future<List<DriverTrip>> driverTrips({String bucket = 'upcoming'}) async {
+    final result = await _api.get('/routes/trips', query: {'bucket': bucket});
+    if (result is! List) {
+      throw const FormatException('Trips response is invalid.');
+    }
+    return result
+        .whereType<Map>()
+        .map((item) => DriverTrip.fromJson(Map<String, dynamic>.from(item)))
+        .toList(growable: false);
+  }
+
+  Future<List<Map<String, dynamic>>> discoverDriverTrips({
+    String? origin,
+    String? destination,
+    DateTime? departureOn,
+  }) async {
+    final query = <String, dynamic>{};
+    if (origin != null && origin.isNotEmpty) query['origin'] = origin;
+    if (destination != null && destination.isNotEmpty) {
+      query['destination'] = destination;
+    }
+    if (departureOn != null) {
+      final localStart = DateTime(
+        departureOn.year,
+        departureOn.month,
+        departureOn.day,
+      );
+      final localEnd = DateTime(
+        departureOn.year,
+        departureOn.month,
+        departureOn.day + 1,
+      );
+      query['departure_from'] = localStart.toUtc().toIso8601String();
+      query['departure_before'] = localEnd.toUtc().toIso8601String();
+    }
+    final result = await _api.get('/routes/trips/discover', query: query);
+    if (result is! List) {
+      throw const FormatException('Trip discovery response is invalid.');
+    }
+    return result
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+  }
+
+  Future<DriverTrip> driverTrip(String tripId) async => DriverTrip.fromJson(
+        Map<String, dynamic>.from(
+            await _api.get('/routes/trips/$tripId') as Map),
+      );
+
+  Future<DriverTrip> createDriverTrip({
+    required String origin,
+    required String destination,
+    required DateTime departureAt,
+    DateTime? estimatedArrivalAt,
+    required String vehicleId,
+    double? currentSoc,
+    required int availableSeats,
+    String? notes,
+    required bool isDiscoverable,
+    required String idempotencyKey,
+  }) async =>
+      DriverTrip.fromJson(Map<String, dynamic>.from(await _api.post(
+        '/routes/trips',
+        data: _driverTripPayload(
+          origin: origin,
+          destination: destination,
+          departureAt: departureAt,
+          estimatedArrivalAt: estimatedArrivalAt,
+          vehicleId: vehicleId,
+          currentSoc: currentSoc,
+          availableSeats: availableSeats,
+          notes: notes,
+          isDiscoverable: isDiscoverable,
+        ),
+        headers: {'Idempotency-Key': idempotencyKey},
+      ) as Map));
+
+  Future<DriverTrip> updateDriverTrip({
+    required String tripId,
+    required String origin,
+    required String destination,
+    required DateTime departureAt,
+    DateTime? estimatedArrivalAt,
+    required String vehicleId,
+    double? currentSoc,
+    required int availableSeats,
+    String? notes,
+    required bool isDiscoverable,
+  }) async =>
+      DriverTrip.fromJson(Map<String, dynamic>.from(await _api.put(
+        '/routes/trips/$tripId',
+        data: _driverTripPayload(
+          origin: origin,
+          destination: destination,
+          departureAt: departureAt,
+          estimatedArrivalAt: estimatedArrivalAt,
+          vehicleId: vehicleId,
+          currentSoc: currentSoc,
+          availableSeats: availableSeats,
+          notes: notes,
+          isDiscoverable: isDiscoverable,
+        ),
+      ) as Map));
+
+  Future<DriverTrip> transitionDriverTrip(String tripId, String action) async {
+    if (!const {'start', 'complete', 'cancel'}.contains(action)) {
+      throw ArgumentError.value(action, 'action');
+    }
+    return DriverTrip.fromJson(Map<String, dynamic>.from(await _api.post(
+      '/routes/trips/$tripId/$action',
+    ) as Map));
+  }
+
+  Map<String, dynamic> _driverTripPayload({
+    required String origin,
+    required String destination,
+    required DateTime departureAt,
+    DateTime? estimatedArrivalAt,
+    required String vehicleId,
+    double? currentSoc,
+    required int availableSeats,
+    String? notes,
+    required bool isDiscoverable,
+  }) =>
+      {
+        'origin': origin,
+        'destination': destination,
+        'departure_at': departureAt.toUtc().toIso8601String(),
+        'estimated_arrival_at': estimatedArrivalAt?.toUtc().toIso8601String(),
+        'vehicle_id': vehicleId,
+        'current_soc': currentSoc,
+        'available_seats': availableSeats,
+        'notes': notes?.trim().isEmpty == true ? null : notes?.trim(),
+        'is_discoverable': isDiscoverable,
+      };
 
   Future<List<DriverVehicle>> vehicles() async {
     final result = await _api.get('/vehicles');
@@ -185,6 +325,22 @@ class DriverRepository {
             data: {'slot_id': slotId, 'lock_token': lockToken},
           ) as Map,
         ),
+      );
+
+  Future<Map<String, dynamic>> verifyRazorpayCheckout({
+    required String orderId,
+    required String paymentId,
+    required String signature,
+  }) async =>
+      Map<String, dynamic>.from(
+        await _api.post(
+          '/payments/razorpay/verify',
+          data: {
+            'order_id': orderId,
+            'payment_id': paymentId,
+            'signature': signature,
+          },
+        ) as Map,
       );
 
   Future<List<Map<String, dynamic>>> hotelRooms({

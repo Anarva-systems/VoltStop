@@ -85,6 +85,9 @@ class AppConfig {
     if (productionBuild && !hasExplicitApiBaseUrl) {
       return 'Release builds must set API_BASE_URL to the production API.';
     }
+    if (!hasExplicitApiBaseUrl) {
+      return 'Development builds must set API_BASE_URL explicitly. Use http://10.0.2.2:8000/api/v1 for an Android emulator, a reachable laptop LAN address for a phone on the same Wi-Fi, or a public HTTPS API for mobile data.';
+    }
     if (productionBuild && !hasExplicitSupabaseUrl) {
       return 'Release builds must set SUPABASE_URL to the production authentication project.';
     }

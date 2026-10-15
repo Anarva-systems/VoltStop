@@ -246,6 +246,9 @@ class _ProfileOnlyDriverRepository extends DriverRepository {
   int routePlanCalls = 0;
 
   @override
+  Future<void> checkApiReadiness() async {}
+
+  @override
   Future<List<Pitstop>> nearbyPitstops({
     double lat = 17.0,
     double lng = 81.8,

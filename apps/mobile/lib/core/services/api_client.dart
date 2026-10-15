@@ -15,6 +15,10 @@ class ApiClient {
     ));
     dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) async {
+        if (options.extra['skipAuth'] == true) {
+          handler.next(options);
+          return;
+        }
         final token = await _accessToken();
         if (token == null || token.isEmpty) {
           handler.reject(DioException(
@@ -39,6 +43,15 @@ class ApiClient {
   Future<dynamic> get(String path, {Map<String, dynamic>? query}) =>
       _request(() => dio.get<dynamic>(path, queryParameters: query));
 
+  /// Confirms the API and its required services are ready before phone auth.
+  /// The readiness endpoint is intentionally public and does not need a token.
+  Future<void> checkReadiness() async {
+    await _request(() => dio.get<dynamic>(
+          '/ready',
+          options: Options(extra: const {'skipAuth': true}),
+        ));
+  }
+
   Future<dynamic> post(String path,
           {Object? data, Map<String, String>? headers}) =>
       _request(() => dio.post<dynamic>(path,
@@ -46,6 +59,9 @@ class ApiClient {
 
   Future<dynamic> patch(String path, {Object? data}) =>
       _request(() => dio.patch<dynamic>(path, data: data));
+
+  Future<dynamic> put(String path, {Object? data}) =>
+      _request(() => dio.put<dynamic>(path, data: data));
 
   Future<dynamic> delete(String path) =>
       _request(() => dio.delete<dynamic>(path));
@@ -85,6 +101,20 @@ class ApiClient {
           category: 'authorization',
         );
       }
+      final deploymentMissing =
+          bodyCode?.toUpperCase() == 'DEPLOYMENT_NOT_FOUND' ||
+              (bodyMessage?.toLowerCase().contains(
+                        'deployment could not be found on vercel',
+                      ) ??
+                  false);
+      if (status == 404 && deploymentMissing) {
+        throw ApiException(
+          'The VoltStop API deployment could not be found on Vercel. The API owner must restore the deployment before your profile can load.',
+          statusCode: status,
+          code: bodyCode,
+          category: 'deployment_unavailable',
+        );
+      }
       if (status == 404) {
         throw ApiException(
           bodyMessage ?? 'This route, menu, or order is no longer available.',
@@ -99,6 +129,14 @@ class ApiClient {
           statusCode: status,
           code: bodyCode,
           category: 'validation',
+        );
+      }
+      if (bodyCode == 'DEPENDENCIES_UNAVAILABLE') {
+        throw ApiException(
+          'VoltStop services are not ready. Try again shortly.',
+          statusCode: status,
+          code: bodyCode,
+          category: 'readiness',
         );
       }
       if (status != null && status >= 500) {

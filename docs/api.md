@@ -79,9 +79,12 @@ event are recorded before the backend submits to Razorpay. An ambiguous timeout
 is left in processing and is never retried automatically. Configure Razorpay to send
 signed `refund.created`, `refund.processed`, and `refund.failed` events to
 `POST /payments/razorpay/webhook`. An existing local idempotency key never
-causes a second provider call. Commission and actual payouts are unavailable
-until settlement rules and a payout ledger are implemented. The admin console
-does not change booking states directly.
+causes a second provider call. A database migration configures a 5% commission
+for verified charging payments and snapshots the rate at capture. Completed
+refunds reduce the commission and the displayed vendor settlement estimate.
+The estimate is read-only; no payout transfer is initiated or marked complete
+because an actual payout ledger and transfer workflow are not implemented. The
+admin console does not change booking states directly.
 
 Disputes follow `open → investigating/awaiting_customer/awaiting_vendor →
 resolved/closed`. Customer and vendor messages and admin decisions append
@@ -97,7 +100,8 @@ Finance approval then reuses `/admin/refunds/{id}/approve` and the existing
 or payout amounts. Provider webhooks append refund completion/failure to the
 linked case. `GET /admin/financial-diagnostics` reports inconsistent records
 without repairing them. Payout checks remain unavailable without a payout
-ledger.
+transfer ledger; the commission ledger records fee calculations but does not
+claim that a vendor was paid.
 
 Role assignments are seeded by the admin migration. Finance Admin alone (besides
 Super Admin) can approve and submit refunds. Operations Admin cannot create or

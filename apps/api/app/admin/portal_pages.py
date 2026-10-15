@@ -261,14 +261,48 @@ async def pricing(_admin: Annotated[AdminContext, Depends(require_permission("pr
 
 
 @router.get("/settings")
-async def platform_settings(_admin: Annotated[AdminContext, Depends(require_permission("settings:read"))]) -> dict[str, Any]:
+async def platform_settings(_admin: Annotated[AdminContext, Depends(require_permission("settings:read"))],
+                           database: DatabaseDependency) -> dict[str, Any]:
     settings = get_settings()
+    async with database.pool.acquire() as conn:
+        commission_settings_configured = await conn.fetchval(
+            "select to_regclass('public.platform_commission_settings') is not null"
+        )
+        commission_ledger_configured = await conn.fetchval(
+            "select to_regclass('public.payment_commission_ledger') is not null"
+        )
+        commission_capture_trigger_configured = await conn.fetchval(
+            """select exists (
+                 select 1 from information_schema.triggers
+                 where trigger_schema='public' and event_object_table='payments'
+                   and trigger_name='payments_record_commission'
+               )"""
+        )
+        commission_rate_bps = (
+            await conn.fetchval("select rate_bps from public.platform_commission_settings where id=1")
+            if commission_settings_configured
+            else None
+        )
+    checkout_credentials_configured = bool(settings.razorpay_key_id and settings.razorpay_key_secret)
+    webhook_secret_configured = len(settings.razorpay_webhook_secret) >= 32
     return success({
         "portal_origin": settings.vendor_portal_origin,
+        "database": {"configured": bool(settings.database_url)},
         "payment": {"provider": "Razorpay", "public_key_configured": bool(settings.razorpay_key_id),
                     "server_secret_configured": bool(settings.razorpay_key_secret),
-                    "webhook_secret_configured": bool(settings.razorpay_webhook_secret)},
-        "geocoding": {"enabled": False, "reason": "No provider transfer has been authorized"},
+                    "webhook_secret_configured": webhook_secret_configured,
+                    "mode": settings.razorpay_mode.strip().lower() or "unconfigured",
+                    "checkout_ready": checkout_credentials_configured and webhook_secret_configured},
+        "commission": {"settings_configured": bool(commission_settings_configured and commission_rate_bps is not None),
+                       "ledger_configured": bool(commission_ledger_configured),
+                       "capture_trigger_configured": bool(commission_capture_trigger_configured),
+                       "rate_bps": int(commission_rate_bps) if commission_rate_bps is not None else None,
+                       "scope": "charging_bookings"},
+        "vendor_settlement": {"provider": None, "configured": False, "ledger_configured": False,
+                              "automatic_transfers_enabled": False,
+                              "status": "estimate_only",
+                              "reason": "Vendor settlement transfers and payout ledger are not implemented or connected."},
+        "geocoding": {"enabled": False, "reason": "No geocoding provider is configured"},
         "redis": {"configured": bool(settings.redis_enabled and settings.redis_url)},
         "editable_platform_config": False,
     })

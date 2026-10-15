@@ -32,6 +32,7 @@ USER_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 OTHER_USER_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 VENDOR_ID = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
 SLOT_ID = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
+VEHICLE_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
 
 
 
@@ -68,6 +69,8 @@ class FakeDatabase:
             "amount_inr": Decimal("350.00"),
         }
         self.saved_routes = []
+        self.driver_trip_rows = {}
+        self.driver_trip_idempotency = {}
         self.vehicle_rows = {}
         self.vehicle_idempotency = {}
         self.pool = FakeAdminPool()
@@ -139,6 +142,134 @@ class FakeDatabase:
         route_id = uuid4()
         self.saved_routes.append((user_id, request, route, route_id))
         return route_id
+
+    async def recommended_route_vendors(self, geojson):
+        return [{"vendor": {"id": str(VENDOR_ID), "name": "Corridor Charge Stop"}, "distance_km": 2.5}]
+
+    async def create_driver_trip(self, user_id, values, idempotency_key, request_fingerprint, route_plan):
+        vehicle = await self.driver_vehicle(user_id, values["vehicle_id"])
+        if vehicle is None:
+            raise ApiError(404, "VEHICLE_NOT_FOUND", "Choose one of your saved vehicles")
+        previous_id = self.driver_trip_idempotency.get((user_id, idempotency_key))
+        if previous_id is not None:
+            previous = self.driver_trip_rows[previous_id]
+            if previous["request_fingerprint"] != request_fingerprint:
+                raise ApiError(409, "IDEMPOTENCY_KEY_REUSED", "This request key was already used for different trip details")
+            return previous
+        trip_id = uuid4()
+        route_summary = None
+        if route_plan is not None:
+            route_summary = {
+                "id": uuid4(),
+                "corridor": "NH-16",
+                "distance_meters": int(route_plan["distance_km"] * 1000),
+                "distance_source": route_plan["distance_source"],
+                "estimated_consumption_kwh": route_plan["estimated_consumption_kwh"],
+                "route_geojson": {"type": "LineString", "coordinates": route_plan["route_coordinates"]},
+            }
+        row = {
+            "id": trip_id,
+            "driver_id": user_id,
+            "vehicle_id": values["vehicle_id"],
+            "route_id": route_summary["id"] if route_summary else None,
+            "origin": values["origin"],
+            "destination": values["destination"],
+            "departure_at": values["departure_at"],
+            "estimated_arrival_at": values.get("estimated_arrival_at"),
+            "vehicle_make": vehicle["make"],
+            "vehicle_model": vehicle["model"],
+            "available_seats": values["available_seats"],
+            "notes": values.get("notes"),
+            "is_discoverable": values["is_discoverable"],
+            "status": "scheduled",
+            "started_at": None,
+            "completed_at": None,
+            "cancelled_at": None,
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc),
+            "request_fingerprint": request_fingerprint,
+            "route_plan": route_summary,
+        }
+        self.driver_trip_rows[trip_id] = row
+        self.driver_trip_idempotency[(user_id, idempotency_key)] = trip_id
+        return row
+
+    async def driver_trip(self, user_id, trip_id):
+        row = self.driver_trip_rows.get(trip_id)
+        return row if row is not None and row["driver_id"] == user_id else None
+
+    async def driver_trips(self, user_id, bucket="upcoming"):
+        now = datetime.now(timezone.utc)
+        rows = [row for row in self.driver_trip_rows.values() if row["driver_id"] == user_id]
+        if bucket == "upcoming":
+            rows = [row for row in rows if row["status"] in ("scheduled", "in_progress") and
+                    (row["status"] == "in_progress" or row["departure_at"] > now)]
+        elif bucket == "past":
+            rows = [row for row in rows if row["status"] in ("completed", "cancelled") or row["departure_at"] <= now]
+        return sorted(rows, key=lambda row: row["departure_at"], reverse=bucket == "past")
+
+    async def discover_driver_trips(self, viewer_id, origin, destination, departure_from, departure_before, limit):
+        rows = []
+        for row in self.driver_trip_rows.values():
+            if row["driver_id"] == viewer_id or not row["is_discoverable"] or row["status"] != "scheduled":
+                continue
+            if row["departure_at"] <= datetime.now(timezone.utc):
+                continue
+            if origin and not row["origin"].lower().startswith(origin.lower()):
+                continue
+            if destination and not row["destination"].lower().startswith(destination.lower()):
+                continue
+            if departure_from and row["departure_at"] < departure_from:
+                continue
+            if departure_before and row["departure_at"] >= departure_before:
+                continue
+            rows.append({key: row.get(key) for key in (
+                "id", "origin", "destination", "departure_at", "estimated_arrival_at",
+                "vehicle_make", "vehicle_model", "available_seats", "status",
+            )})
+        return rows[:limit]
+
+    async def update_driver_trip(self, user_id, trip_id, values, route_plan):
+        row = await self.driver_trip(user_id, trip_id)
+        if row is None:
+            return None
+        if row["status"] != "scheduled" or row["departure_at"] <= datetime.now(timezone.utc):
+            raise ApiError(409, "TRIP_NOT_EDITABLE", "Only trips that are still scheduled can be edited")
+        vehicle = await self.driver_vehicle(user_id, values["vehicle_id"])
+        if vehicle is None:
+            raise ApiError(404, "VEHICLE_NOT_FOUND", "Choose one of your saved vehicles")
+        row.update({
+            "vehicle_id": values["vehicle_id"],
+            "vehicle_make": vehicle["make"],
+            "vehicle_model": vehicle["model"],
+            "origin": values["origin"],
+            "destination": values["destination"],
+            "departure_at": values["departure_at"],
+            "estimated_arrival_at": values.get("estimated_arrival_at"),
+            "available_seats": values["available_seats"],
+            "notes": values.get("notes"),
+            "is_discoverable": values["is_discoverable"],
+            "route_plan": route_plan,
+        })
+        return row
+
+    async def transition_driver_trip(self, user_id, trip_id, target_status):
+        row = await self.driver_trip(user_id, trip_id)
+        if row is None:
+            return None
+        if row["status"] == target_status:
+            return row
+        allowed = {
+            ("scheduled", "in_progress"): "started_at",
+            ("in_progress", "completed"): "completed_at",
+            ("scheduled", "cancelled"): "cancelled_at",
+        }
+        timestamp = allowed.get((row["status"], target_status))
+        if timestamp is None:
+            raise ApiError(409, "INVALID_TRIP_TRANSITION", "This trip cannot move to that status")
+        row["status"] = target_status
+        row[timestamp] = datetime.now(timezone.utc)
+        return row
 
     async def nearby_vendors(self, lat, lng, radius_km):
         return [{"vendor": {"id": str(VENDOR_ID), "name": "Demo Dhaba", "type": "restaurant"}, "distance_km": 4.2,
@@ -1331,3 +1462,199 @@ def test_route_service_rejects_non_pilot_route():
 
     import asyncio
     asyncio.run(run())
+
+
+def _saved_trip_vehicle(context, *, owner_key="driver-trip-vehicle-001"):
+    response = context.client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Tata",
+            "model": "Nexon EV",
+            "vehicle_type": "suv",
+            "battery_kwh": 40,
+            "efficiency_km_per_kwh": 6,
+            "current_soc": 70,
+        },
+        headers={"Idempotency-Key": owner_key},
+    )
+    assert response.status_code == 200
+    return response.json()["data"]["id"]
+
+
+def _driver_trip_payload(vehicle_id, **changes):
+    departure = datetime.now(timezone.utc) + timedelta(days=2)
+    return {
+        "origin": "Srikakulam",
+        "destination": "Vijayawada",
+        "departure_at": departure.isoformat(),
+        "estimated_arrival_at": (departure + timedelta(hours=6)).isoformat(),
+        "vehicle_id": vehicle_id,
+        "current_soc": None,
+        "available_seats": 3,
+        "notes": "Private trip note",
+        "is_discoverable": True,
+        **changes,
+    }
+
+
+def test_driver_trip_create_is_owner_scoped_and_idempotent(context):
+    vehicle_id = _saved_trip_vehicle(context)
+    payload = _driver_trip_payload(vehicle_id)
+    headers = {"Idempotency-Key": "driver-trip-create-key-001"}
+
+    first = context.client.post("/api/v1/routes/trips", json=payload, headers=headers)
+    replay = context.client.post("/api/v1/routes/trips", json=payload, headers=headers)
+
+    assert first.status_code == replay.status_code == 200
+    trip = first.json()["data"]
+    assert replay.json()["data"]["id"] == trip["id"]
+    assert trip["driver_id"] == str(USER_ID)
+    assert trip["vehicle_id"] == vehicle_id
+    assert trip["available_seats"] == 3
+    assert trip["route_plan_status"] == "not_requested"
+    assert len(context.database.driver_trip_rows) == 1
+    assert context.client.get("/api/v1/routes/trips").json()["data"][0]["id"] == trip["id"]
+
+    changed_payload = {**payload, "notes": "Different request"}
+    conflict = context.client.post("/api/v1/routes/trips", json=changed_payload, headers=headers)
+    assert conflict.status_code == 409
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"available_seats": 0},
+        {"available_seats": 9},
+        {"origin": "Vijayawada", "destination": "Vijayawada"},
+        {"origin": "Chennai"},
+        {"departure_at": "2020-01-01T12:00:00+00:00"},
+        {"departure_at": "2030-01-01T12:00:00"},
+    ],
+)
+def test_driver_trip_rejects_invalid_fields(context, changes):
+    vehicle_id = _saved_trip_vehicle(context)
+    response = context.client.post(
+        "/api/v1/routes/trips",
+        json=_driver_trip_payload(vehicle_id, **changes),
+        headers={"Idempotency-Key": "driver-trip-invalid-key-001"},
+    )
+    assert response.status_code == 422
+
+
+def test_driver_trip_rejects_client_identity_and_foreign_vehicle(context):
+    payload = _driver_trip_payload(str(VEHICLE_ID), driver_id=str(OTHER_USER_ID))
+    extra_identity = context.client.post(
+        "/api/v1/routes/trips",
+        json=payload,
+        headers={"Idempotency-Key": "driver-trip-identity-key"},
+    )
+    assert extra_identity.status_code == 422
+
+    own_id = _saved_trip_vehicle(context)
+    override = app.dependency_overrides[get_current_user]
+
+    async def other_user():
+        return AuthenticatedUser(id=OTHER_USER_ID, email="other@example.test")
+
+    app.dependency_overrides[get_current_user] = other_user
+    try:
+        foreign_vehicle = context.client.post(
+            "/api/v1/routes/trips",
+            json=_driver_trip_payload(own_id),
+            headers={"Idempotency-Key": "driver-trip-foreign-vehicle"},
+        )
+        assert foreign_vehicle.status_code == 404
+    finally:
+        app.dependency_overrides[get_current_user] = override
+
+
+def test_driver_trip_edit_cancel_and_lifecycle_rules(context):
+    vehicle_id = _saved_trip_vehicle(context)
+    created = context.client.post(
+        "/api/v1/routes/trips",
+        json=_driver_trip_payload(vehicle_id),
+        headers={"Idempotency-Key": "driver-trip-lifecycle-001"},
+    )
+    trip_id = created.json()["data"]["id"]
+
+    updated_payload = _driver_trip_payload(
+        vehicle_id,
+        destination="Eluru",
+        available_seats=2,
+        notes="Updated private note",
+    )
+    updated = context.client.put(f"/api/v1/routes/trips/{trip_id}", json=updated_payload)
+    assert updated.status_code == 200
+    assert updated.json()["data"]["destination"].startswith("Eluru,")
+    assert updated.json()["data"]["available_seats"] == 2
+
+    cancelled = context.client.post(f"/api/v1/routes/trips/{trip_id}/cancel")
+    cancelled_again = context.client.post(f"/api/v1/routes/trips/{trip_id}/cancel")
+    assert cancelled.status_code == cancelled_again.status_code == 200
+    assert cancelled.json()["data"]["status"] == "cancelled"
+    assert all(row["id"] != trip_id for row in context.client.get(
+        "/api/v1/routes/trips?bucket=upcoming"
+    ).json()["data"])
+    assert any(row["id"] == trip_id for row in context.client.get(
+        "/api/v1/routes/trips?bucket=past"
+    ).json()["data"])
+    assert context.client.post(f"/api/v1/routes/trips/{trip_id}/start").status_code == 409
+
+    second = context.client.post(
+        "/api/v1/routes/trips",
+        json=_driver_trip_payload(vehicle_id, is_discoverable=False),
+        headers={"Idempotency-Key": "driver-trip-lifecycle-002"},
+    )
+    second_id = second.json()["data"]["id"]
+    assert context.client.post(f"/api/v1/routes/trips/{second_id}/complete").status_code == 409
+    assert context.client.post(f"/api/v1/routes/trips/{second_id}/start").json()["data"]["status"] == "in_progress"
+    assert context.client.put(f"/api/v1/routes/trips/{second_id}", json=updated_payload).status_code == 409
+    assert context.client.post(f"/api/v1/routes/trips/{second_id}/complete").json()["data"]["status"] == "completed"
+
+
+def test_driver_trip_ownership_and_discovery_privacy(context):
+    vehicle_id = _saved_trip_vehicle(context)
+    created = context.client.post(
+        "/api/v1/routes/trips",
+        json=_driver_trip_payload(vehicle_id),
+        headers={"Idempotency-Key": "driver-trip-discoverable-001"},
+    )
+    trip_id = created.json()["data"]["id"]
+    override = app.dependency_overrides[get_current_user]
+
+    async def other_user():
+        return AuthenticatedUser(id=OTHER_USER_ID, email="other@example.test")
+
+    app.dependency_overrides[get_current_user] = other_user
+    try:
+        other_vehicle_id = _saved_trip_vehicle(
+            context, owner_key="driver-trip-other-owner-vehicle"
+        )
+        assert context.client.get(f"/api/v1/routes/trips/{trip_id}").status_code == 404
+        assert context.client.put(
+            f"/api/v1/routes/trips/{trip_id}",
+            json=_driver_trip_payload(other_vehicle_id),
+        ).status_code == 404
+        assert context.client.post(f"/api/v1/routes/trips/{trip_id}/cancel").status_code == 404
+        assert context.client.get("/api/v1/routes/trips").json()["data"] == []
+
+        found = context.client.get(
+            "/api/v1/routes/trips/discover?origin=Srikakulam&destination=Vijayawada"
+        )
+        assert found.status_code == 200
+        listing = found.json()["data"][0]
+        assert listing["id"] == trip_id
+        assert "notes" not in listing
+        assert "driver_id" not in listing
+        assert "vehicle_id" not in listing
+    finally:
+        app.dependency_overrides[get_current_user] = override
+
+
+def test_driver_trip_routes_require_authentication(context):
+    override = app.dependency_overrides.pop(get_current_user)
+    try:
+        assert context.client.get("/api/v1/routes/trips").status_code == 401
+        assert context.client.get("/api/v1/routes/trips/discover").status_code == 401
+    finally:
+        app.dependency_overrides[get_current_user] = override

@@ -4,15 +4,72 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 
+from app.auth.dependencies import CurrentUser
 from app.core.config import Settings, get_settings
 from app.core.database_dependency import DatabaseDependency
 from app.core.errors import ApiError
 from app.core.responses import success
-from app.payments.service import verify_webhook_signature
+from app.payments.schemas import RazorpayCheckoutVerification
+from app.payments.service import RazorpayGateway, verify_checkout_signature, verify_webhook_signature
 from app.restaurants.repository import RestaurantRepository
 
 router = APIRouter(prefix="/payments", tags=["payments"])
 logger = logging.getLogger(__name__)
+
+
+@router.post("/razorpay/verify")
+async def verify_razorpay_checkout(
+    payload: RazorpayCheckoutVerification,
+    request: Request,
+    user: CurrentUser,
+    database: DatabaseDependency,
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    if (
+        not settings.razorpay_key_id
+        or not settings.razorpay_key_secret
+        or not settings.razorpay_mode.strip()
+    ):
+        raise ApiError(
+            503, "PAYMENT_UNAVAILABLE", "Razorpay checkout verification is not configured"
+        )
+    if not verify_checkout_signature(
+        payload.order_id, payload.payment_id, payload.signature, settings.razorpay_key_secret
+    ):
+        logger.warning("Razorpay checkout verification rejected: INVALID_CHECKOUT_SIGNATURE")
+        raise ApiError(400, "INVALID_PAYMENT_SIGNATURE", "Payment signature could not be verified")
+    if not await database.user_owns_payment_order(payload.order_id, user.id):
+        raise ApiError(404, "PAYMENT_NOT_FOUND", "Payment order was not found")
+
+    provider_payment = await RazorpayGateway(
+        request.app.state.http_client, settings
+    ).fetch_payment(payload.payment_id)
+    if provider_payment["order_id"] != payload.order_id:
+        raise ApiError(400, "PAYMENT_ORDER_MISMATCH", "Payment could not be matched to this order")
+
+    captured = provider_payment["status"] == "captured"
+    if provider_payment["status"] not in {"captured", "failed", "authorized", "created"}:
+        raise ApiError(502, "PAYMENT_PROVIDER_ERROR", "Razorpay returned an unsupported payment status")
+    if captured:
+        amount_paise = provider_payment["amount"]
+        currency = provider_payment["currency"]
+        processed = await database.process_payment_webhook(
+            payload.order_id, payload.payment_id, amount_paise, currency, True
+        )
+        if not processed and hasattr(database, "process_hotel_payment_webhook"):
+            processed = await database.process_hotel_payment_webhook(
+                payload.order_id, payload.payment_id, amount_paise, currency, True
+            )
+        if not processed:
+            processed = await RestaurantRepository(database.pool).process_payment_webhook(
+                payload.order_id, payload.payment_id, amount_paise, currency, True
+            )
+        if not processed:
+            raise ApiError(404, "PAYMENT_NOT_FOUND", "Payment order was not found")
+    return success(
+        {"verified": captured, "status": "captured" if captured else provider_payment["status"]},
+        "Payment verified" if captured else "Payment is not captured yet",
+    )
 
 
 @router.post("/razorpay/webhook")

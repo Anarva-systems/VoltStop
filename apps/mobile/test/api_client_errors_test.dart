@@ -164,4 +164,26 @@ void main() {
       ),
     );
   });
+
+  test('backend readiness failure is distinguished from an OTP error',
+      () async {
+    final client = clientReturning(503, {
+      'success': false,
+      'error': {
+        'code': 'DEPENDENCIES_UNAVAILABLE',
+        'message': 'One or more required services are unavailable',
+      },
+    });
+
+    await expectLater(
+      client.checkReadiness(),
+      throwsA(
+        isA<ApiException>()
+            .having((error) => error.statusCode, 'status', 503)
+            .having((error) => error.category, 'category', 'readiness')
+            .having((error) => error.message, 'message',
+                'VoltStop services are not ready. Try again shortly.'),
+      ),
+    );
+  });
 }

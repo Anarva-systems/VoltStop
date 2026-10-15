@@ -26,7 +26,7 @@ export default function AdminOverviewPage() {
         <MetricCard label="Total bookings" value={metrics?.total_bookings ?? 0} icon="calendar" tone="cyan"/>
         <MetricCard label="Active vendors" value={metrics?.active_vendors ?? 0} icon="store" tone="green"/>
         <MetricCard label="Gross booking value" value={formatAdminMoney(metrics?.gross_booking_value)} note="Captured payments" icon="credit"/>
-        <MetricCard label="Platform revenue" value={metrics?.platform_revenue === null ? unavailable : formatAdminMoney(metrics?.platform_revenue)} note="Commission not configured" icon="chart" tone="amber"/>
+        <MetricCard label="Calculated commission" value={metrics?.platform_revenue === null ? unavailable : formatAdminMoney(metrics?.platform_revenue)} note={`${Number(metrics?.platform_commission_rate_bps ?? 0) / 100}% policy estimate · not provider-split`} icon="chart" tone="amber"/>
         <MetricCard label="Pending disputes" value={metrics?.pending_disputes ?? 0} icon="shield" tone="red"/>
         <MetricCard label="Refund amount" value={formatAdminMoney(metrics?.refund_amount)} note="Completed refunds only" icon="refresh"/>
       </div>

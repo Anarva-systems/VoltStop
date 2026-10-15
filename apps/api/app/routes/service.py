@@ -9,11 +9,25 @@ from app.core.errors import ApiError
 
 PILOT_PLACES = {
     "srikakulam": "Srikakulam, Andhra Pradesh, India",
+    "vizianagaram": "Vizianagaram, Andhra Pradesh, India",
+    "visakhapatnam": "Visakhapatnam, Andhra Pradesh, India",
+    "anakapalle": "Anakapalle, Andhra Pradesh, India",
+    "tuni": "Tuni, Andhra Pradesh, India",
+    "annavaram": "Annavaram, Andhra Pradesh, India",
+    "rajahmundry": "Rajahmundry, Andhra Pradesh, India",
+    "eluru": "Eluru, Andhra Pradesh, India",
     "vijayawada": "Vijayawada, Andhra Pradesh, India",
 }
 
 PILOT_COORDINATES = {
     "srikakulam": (83.8968, 18.2969),
+    "vizianagaram": (83.3970, 18.1133),
+    "visakhapatnam": (83.20161, 17.68009),
+    "anakapalle": (83.003946, 17.691342),
+    "tuni": (82.5460, 17.3590),
+    "annavaram": (82.396713, 17.279295),
+    "rajahmundry": (81.777839, 17.005171),
+    "eluru": (81.1154, 16.7104),
     "vijayawada": (80.6480, 16.5062),
 }
 
@@ -140,7 +154,7 @@ class PilotRouteService:
             raise ApiError(
                 422,
                 "UNSUPPORTED_PILOT_ROUTE",
-                "Only Srikakulam ⇄ Vijayawada on NH-16 is supported by the pilot",
+                "Choose stops on the supported Srikakulam–Vijayawada NH-16 corridor",
             )
         if origin_key == destination_key:
             raise ApiError(422, "INVALID_ROUTE", "Origin and destination must be different")

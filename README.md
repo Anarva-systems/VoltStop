@@ -82,21 +82,23 @@ slots, services, and revenue are read and updated through owner-scoped API
 endpoints. New business profiles remain hidden until VoltStop verifies and
 activates them.
 
-For the deployed VoltStop portal, set the vendor-web project's Production
-`NEXT_PUBLIC_API_URL` to `https://api-one-nu-41.vercel.app/api/v1` before
-building. Set the API project's Production `VENDOR_PORTAL_ORIGIN` to
-`https://vendor-web-xi.vercel.app`. If a preview portal must call the production
-API, add its exact HTTPS origin to the API project's Production
-`VENDOR_PORTAL_PREVIEW_ORIGINS` (comma-separated for multiple approved previews);
-do not use wildcard or reflected origins. Keep the backend in `ENVIRONMENT=production`
-and provide its required database, Supabase, Redis, and payment settings there;
-do not place backend credentials in the frontend project. Preview and local
-deployments should use their own API and portal origins. The web client now
-fails with a configuration message if a non-development build has no API URL,
-instead of silently calling localhost.
+For a production deployment, set the vendor-web project's Production
+`NEXT_PUBLIC_API_URL` to the base URL of the currently deployed API followed by
+`/api/v1`. The previous `api-one-nu-41.vercel.app` and
+`vendor-web-xi.vercel.app` deployments were deleted and must not be reused as
+active endpoints. Set the API project's Production `VENDOR_PORTAL_ORIGIN` to
+the current web origin. If an approved preview portal must call Production,
+add its exact HTTPS origin to `VENDOR_PORTAL_PREVIEW_ORIGINS`; do not use
+wildcard or reflected origins. Keep the backend in `ENVIRONMENT=production`
+and configure its database, Supabase, Redis, and payment settings on the API
+project only. Preview and local deployments should use their own API and portal
+origins. The web client fails with a configuration message if a non-development
+build has no API URL, instead of silently calling localhost.
 
 For the Vercel Vendor Web project, set the Root Directory to `apps/vendor-web`
-and use the Next.js build command `npm run build`. Configure Production
+and use the Next.js build command `npm run build`. For the FastAPI Vercel
+project, set the Root Directory to `apps/api`; `index.py` exports the ASGI app
+and Vercel installs `requirements.txt`. Configure Production
 Supabase values from the same project: either use
 `NEXT_PUBLIC_SUPABASE_URL` with `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (or the
 legacy `NEXT_PUBLIC_SUPABASE_ANON_KEY`), or use the Supabase integration names
@@ -123,9 +125,11 @@ derived from bookings. Vendor responses are append-only and do not change case
 status or financials. Admin events and audit records are append-only. Refund
 requests are submitted for separately audited Finance Admin approval before
 the server calls Razorpay. Refund operations require Razorpay server credentials;
-ambiguous provider responses remain in processing for reconciliation. Platform commission,
-automated vendor payouts, GPS telemetry, and support/complaint systems are not
-implemented and are shown as unavailable in the console.
+ambiguous provider responses remain in processing for reconciliation. Verified
+charging payments use the database-configured 5% platform commission; completed
+refunds reduce the calculated fee and vendor settlement estimate. The estimate
+does not initiate transfers: an automated vendor payout ledger and transfer
+workflow, GPS telemetry, and support/complaint systems remain unimplemented.
 
 ## Start the Flutter mobile app
 

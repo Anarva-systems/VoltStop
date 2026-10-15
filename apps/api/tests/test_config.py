@@ -22,10 +22,17 @@ def staging_settings(**overrides) -> Settings:
 
 
 def test_development_keeps_local_defaults():
-    settings = Settings(_env_file=None)
+    settings = Settings(_env_file=None, environment="development")
 
     assert settings.environment == "development"
     assert settings.razorpay_mode == ""
+
+
+def test_unset_environment_fails_closed_as_production(monkeypatch):
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+
+    with pytest.raises(ValidationError, match="Missing required staging/production settings"):
+        Settings(_env_file=None)
 
 
 def test_development_rejects_live_razorpay_configuration():
@@ -38,6 +45,14 @@ def test_staging_accepts_explicit_isolated_test_configuration():
 
     assert settings.environment == "staging"
     assert settings.razorpay_mode == "test"
+
+
+def test_staging_allows_checkout_testing_without_webhook_secret():
+    settings = staging_settings(razorpay_webhook_secret="")
+
+    assert settings.environment == "staging"
+    assert settings.razorpay_mode == "test"
+    assert settings.razorpay_webhook_secret == ""
 
 
 def test_vendor_portal_origins_include_only_explicit_preview_origins():
@@ -144,6 +159,16 @@ def test_production_accepts_explicit_live_configuration():
 
     assert settings.environment == "production"
     assert settings.razorpay_mode == "live"
+
+
+def test_production_requires_webhook_secret():
+    with pytest.raises(ValidationError, match="RAZORPAY_WEBHOOK_SECRET"):
+        staging_settings(
+            environment="production",
+            razorpay_mode="live",
+            razorpay_key_id="rzp_live_phase23",
+            razorpay_webhook_secret="",
+        )
 
 
 def test_unknown_environment_fails_closed():

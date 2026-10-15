@@ -13,13 +13,16 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "VoltStop API"
-    environment: str = "development"
+    # A cloud deployment must opt into development explicitly; otherwise missing
+    # production configuration should fail closed during process startup.
+    environment: str = "production"
     supabase_url: str = ""
     supabase_anon_key: str = ""
     supabase_publishable_key: str = ""
     bootstrap_admin_email: str = ""
     vendor_portal_origin: str = "http://localhost:3000"
     vendor_portal_preview_origins: str = ""
+    vendor_portal_dev_origins: str = ""
     database_url: str = ""
     redis_url: str = "redis://localhost:6379/0"
     redis_enabled: bool = True
@@ -63,6 +66,11 @@ class Settings(BaseSettings):
             origin = raw_origin.strip()
             if origin:
                 origins.append(self._canonical_origin(origin))
+        if self.environment.strip().lower() == "development":
+            for raw_origin in self.vendor_portal_dev_origins.split(","):
+                origin = raw_origin.strip()
+                if origin:
+                    origins.append(self._canonical_origin(origin))
         return list(dict.fromkeys(origins))
 
     @property
@@ -85,6 +93,11 @@ class Settings(BaseSettings):
             canonical = self._canonical_origin(origin)
             if not canonical.startswith("https://"):
                 raise ValueError("VENDOR_PORTAL_PREVIEW_ORIGINS must contain HTTPS origins only")
+        if environment != "development" and self.vendor_portal_dev_origins.strip():
+            raise ValueError("VENDOR_PORTAL_DEV_ORIGINS is allowed only in development")
+        for origin in self.vendor_portal_dev_origins.split(","):
+            if origin.strip():
+                self._canonical_origin(origin)
 
         if environment == "development":
             mode = self.razorpay_mode.strip().lower()
@@ -108,9 +121,10 @@ class Settings(BaseSettings):
             "REDIS_URL": self.redis_url,
             "RAZORPAY_KEY_ID": self.razorpay_key_id,
             "RAZORPAY_KEY_SECRET": self.razorpay_key_secret,
-            "RAZORPAY_WEBHOOK_SECRET": self.razorpay_webhook_secret,
             "RAZORPAY_MODE": self.razorpay_mode,
         }
+        if environment == "production":
+            required["RAZORPAY_WEBHOOK_SECRET"] = self.razorpay_webhook_secret
         missing = [name for name, value in required.items() if not value.strip()]
         if missing:
             raise ValueError("Missing required staging/production settings: " + ", ".join(missing))
@@ -153,7 +167,9 @@ class Settings(BaseSettings):
         expected_key_prefix = "rzp_test_" if expected_mode == "test" else "rzp_live_"
         if not self.razorpay_key_id.startswith(expected_key_prefix):
             raise ValueError("RAZORPAY_KEY_ID does not match the configured environment mode")
-        if len(self.razorpay_webhook_secret) < 32:
+        if self.razorpay_webhook_secret and len(self.razorpay_webhook_secret) < 32:
+            raise ValueError("RAZORPAY_WEBHOOK_SECRET must contain at least 32 characters")
+        if environment == "production" and len(self.razorpay_webhook_secret) < 32:
             raise ValueError("RAZORPAY_WEBHOOK_SECRET must contain at least 32 characters")
 
         if redis.scheme != "rediss":

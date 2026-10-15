@@ -22,6 +22,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen> {
   bool _showOrders = false;
   bool _busy = false;
   String? _activeOrderId;
+  String? _activeRazorpayOrderId;
   String? _orderIdempotencyKey;
   String? _message;
 
@@ -30,7 +31,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen> {
     super.initState();
     _menu = widget.app.driverRepository.restaurantMenu(widget.vendor.id);
     _orders = widget.app.driverRepository.restaurantOrders();
-    _razorpay.on(Razorpay.EVENT_PAYMENT_SUCCESS, (_) => _checkOrderStatus());
+    _razorpay.on(Razorpay.EVENT_PAYMENT_SUCCESS, _onPaymentSuccess);
     _razorpay.on(Razorpay.EVENT_PAYMENT_ERROR, (_) => _checkOrderStatus());
     _razorpay.on(Razorpay.EVENT_EXTERNAL_WALLET, (_) => _checkOrderStatus());
   }
@@ -142,6 +143,7 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen> {
         throw StateError(
             'Verified payment details are unavailable. The order remains pending on the server.');
       }
+      _activeRazorpayOrderId = '${payment['order_id']}';
       if (!mounted) return;
       final confirm = await showDialog<bool>(
           context: context,
@@ -316,6 +318,24 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen> {
     if (mounted)
       setState(() => _message =
           'Confirmation is pending. Check My orders for the server-verified status before retrying.');
+  }
+
+  Future<void> _onPaymentSuccess(PaymentSuccessResponse response) async {
+    final orderId = response.orderId ?? _activeRazorpayOrderId;
+    final paymentId = response.paymentId;
+    final signature = response.signature;
+    if (orderId != null && paymentId != null && signature != null) {
+      try {
+        await widget.app.driverRepository.verifyRazorpayCheckout(
+          orderId: orderId,
+          paymentId: paymentId,
+          signature: signature,
+        );
+      } catch (_) {
+        // The status endpoint remains authoritative if the network is transiently unavailable.
+      }
+    }
+    await _checkOrderStatus();
   }
 
   @override

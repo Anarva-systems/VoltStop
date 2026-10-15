@@ -28,6 +28,8 @@ class AppController extends ChangeNotifier {
   bool get profileComplete =>
       activeVehicle?.isComplete ?? (profile?.isComplete ?? false);
 
+  Future<void> checkApiReadiness() => driverRepository.checkApiReadiness();
+
   Future<void> loadVehicles({bool notify = true}) async {
     try {
       vehicles = await driverRepository.vehicles();

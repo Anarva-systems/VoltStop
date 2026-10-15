@@ -84,6 +84,11 @@ export type RevenueReport = {
   today_gross: number;
   week_gross: number;
   month_gross: number;
+  all_time_gross: number;
+  completed_refunds: number;
+  platform_fee: number;
+  estimated_payout: number;
+  commission_rate_bps: number;
   total_bookings: number;
   completed_bookings: number;
   cancelled_bookings: number;

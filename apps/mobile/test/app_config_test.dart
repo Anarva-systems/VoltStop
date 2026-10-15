@@ -42,6 +42,31 @@ void main() {
     );
   });
 
+  test('development builds must explicitly choose a device-reachable API', () {
+    expect(
+      AppConfig.validateBuildConfiguration(
+        'http://10.0.2.2:8000/api/v1',
+        environment: 'development',
+        isRelease: false,
+        hasExplicitApiBaseUrl: false,
+        hasExplicitSupabaseUrl: false,
+        hasExplicitSupabaseKey: false,
+      ),
+      contains('Development builds must set API_BASE_URL explicitly'),
+    );
+    expect(
+      AppConfig.validateBuildConfiguration(
+        'http://10.0.2.2:8000/api/v1',
+        environment: 'development',
+        isRelease: false,
+        hasExplicitApiBaseUrl: true,
+        hasExplicitSupabaseUrl: false,
+        hasExplicitSupabaseKey: false,
+      ),
+      isNull,
+    );
+  });
+
   test('release API configuration rejects LAN and emulator URLs', () {
     for (final url in [
       'http://10.0.2.2:8000/api/v1',

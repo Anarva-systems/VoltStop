@@ -126,6 +126,30 @@ void main() {
     },
   );
 
+  testWidgets('backend outage does not request or consume an OTP',
+      (tester) async {
+    _setPhoneViewport(tester);
+    final auth = _OtpRequestRecordingAuthRepository();
+    final repository = _PreviewDriverRepository()..failReadiness = true;
+    final app = AppController(auth: auth, driverRepository: repository);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildVoltStopTheme(),
+        home: PhoneAuthScreen(app: app),
+      ),
+    );
+    await tester.enterText(find.byType(TextField), '9876543210');
+    await tester.tap(find.text('Request one-time code'));
+    await tester.pumpAndSettle();
+
+    expect(auth.sendCalls, 0);
+    expect(
+      find.textContaining('no sign-in code was requested'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('driver home prioritizes route planning at phone dimensions', (
     tester,
   ) async {
@@ -193,6 +217,7 @@ void main() {
           origin: 'Srikakulam',
           destination: 'Vijayawada',
           soc: null,
+          departureAt: DateTime.now().add(const Duration(hours: 2)),
         ),
       ),
     );
@@ -212,6 +237,11 @@ void main() {
     expect(app.profile?.currentSoc, 75);
     expect(
         (app.driverRepository as _PreviewDriverRepository).routePlanCalls, 1);
+    await tester.scrollUntilVisible(
+      find.text('Estimated drive time'),
+      240,
+      scrollable: find.byType(Scrollable).last,
+    );
     expect(find.text('Estimated drive time'), findsOneWidget);
     expect(find.text('3 hr'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -261,6 +291,15 @@ class _RecordingAuthRepository extends AuthRepository {
   }
 }
 
+class _OtpRequestRecordingAuthRepository extends _RecordingAuthRepository {
+  int sendCalls = 0;
+
+  @override
+  Future<void> sendOtp(String phone) async {
+    sendCalls++;
+  }
+}
+
 class _RecordingProfileSaveRepository extends _PreviewDriverRepository {
   int saveCalls = 0;
 
@@ -275,7 +314,20 @@ class _PreviewDriverRepository extends DriverRepository {
   _PreviewDriverRepository() : super(ApiClient(accessToken: () async => null));
 
   bool failProfile = false;
+  bool failReadiness = false;
   int routePlanCalls = 0;
+
+  @override
+  Future<void> checkApiReadiness() async {
+    if (failReadiness) {
+      throw const ApiException(
+        'VoltStop services are not ready. Try again shortly.',
+        statusCode: 503,
+        code: 'DEPENDENCIES_UNAVAILABLE',
+        category: 'readiness',
+      );
+    }
+  }
 
   @override
   Future<List<DriverVehicle>> vehicles() async => const [];

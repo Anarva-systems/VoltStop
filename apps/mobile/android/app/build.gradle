@@ -12,6 +12,23 @@ if (localPropertiesFile.exists()) {
     }
 }
 
+def releaseSigningProperties = new Properties()
+def releaseSigningPropertiesFile = rootProject.file('key.properties')
+if (releaseSigningPropertiesFile.exists()) {
+    releaseSigningPropertiesFile.withInputStream { stream ->
+        releaseSigningProperties.load(stream)
+    }
+}
+def releaseSigningValues = [
+    releaseSigningProperties['storeFile'],
+    releaseSigningProperties['storePassword'],
+    releaseSigningProperties['keyAlias'],
+    releaseSigningProperties['keyPassword'],
+]
+def releaseSigningValuesPresent = releaseSigningValues.every {
+    it != null && !it.toString().trim().isEmpty() && !it.toString().contains('REPLACE_WITH')
+} && file(releaseSigningProperties['storeFile'] ?: '__missing_release_keystore__').isFile()
+
 def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
 if (flutterVersionCode == null) {
     flutterVersionCode = '1'
@@ -43,15 +60,37 @@ android {
     defaultConfig {
         applicationId "com.voltstop.app"
         minSdkVersion flutter.minSdkVersion
-        targetSdk 34
+        targetSdk 36
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
     }
 
+    signingConfigs {
+        release {
+            if (releaseSigningValuesPresent) {
+                storeFile file(releaseSigningProperties['storeFile'])
+                storePassword releaseSigningProperties['storePassword']
+                keyAlias releaseSigningProperties['keyAlias']
+                keyPassword releaseSigningProperties['keyPassword']
+            }
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig signingConfigs.debug
+            signingConfig releaseSigningValuesPresent ? signingConfigs.release : null
         }
+    }
+}
+
+gradle.taskGraph.whenReady { taskGraph ->
+    def createsReleaseArtifact = taskGraph.allTasks.any {
+        it.name == 'assembleRelease' || it.name == 'bundleRelease'
+    }
+    if (createsReleaseArtifact && !releaseSigningValuesPresent) {
+        throw new GradleException(
+            'Release signing is not configured. Create android/key.properties from key.properties.example and use the existing VoltStop release keystore.'
+        )
     }
 }
 

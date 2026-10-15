@@ -19,6 +19,7 @@ import '../../../models/pitstop.dart';
 import 'dispute_screens.dart';
 import 'vehicles_screen.dart';
 import 'restaurant_screens.dart';
+import 'upcoming_trips_screen.dart';
 
 class ProfileSetupScreen extends StatefulWidget {
   const ProfileSetupScreen({super.key, required this.app});
@@ -216,7 +217,10 @@ class _DriverShellState extends State<DriverShell> {
     final pages = [
       HomeScreen(app: widget.app, onExplore: () => setState(() => _index = 1)),
       DiscoveryScreen(app: widget.app),
-      BookingsScreen(app: widget.app),
+      DriverTripsScreen(
+        app: widget.app,
+        reservations: BookingsScreen(app: widget.app),
+      ),
       ProfileScreen(app: widget.app)
     ];
     return Scaffold(
@@ -256,7 +260,9 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  bool _reversed = false;
+  String _origin = 'Srikakulam';
+  String _destination = 'Vijayawada';
+  late DateTime _departureAt;
   double? _soc;
   bool _savingSoc = false;
   String? _socSaveError;
@@ -269,13 +275,12 @@ class _HomeScreenState extends State<HomeScreen> {
   late Future<List<Pitstop>> _vendors;
   late Future<List<Booking>> _bookings;
 
-  String get _origin => _reversed ? 'Vijayawada' : 'Srikakulam';
-  String get _destination => _reversed ? 'Srikakulam' : 'Vijayawada';
   DriverProfile get _profile => widget.app.profile ?? const DriverProfile();
 
   @override
   void initState() {
     super.initState();
+    _departureAt = DateTime.now().add(const Duration(minutes: 10));
     _soc =
         widget.app.activeVehicle?.currentSoc ?? widget.app.profile?.currentSoc;
     _load();
@@ -321,6 +326,7 @@ class _HomeScreenState extends State<HomeScreen> {
       stateOfCharge: stateOfCharge,
       efficiency: efficiency,
       persist: false,
+      departureAt: _departureAt,
     );
   }
 
@@ -432,6 +438,14 @@ class _HomeScreenState extends State<HomeScreen> {
                                   fontSize: 11)),
                         ),
                       ]),
+                      const SizedBox(height: 5),
+                      Text(
+                        'Choose any listed town along the pilot stretch as your start or destination.',
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(color: VoltColors.muted),
+                      ),
                       const SizedBox(height: 13),
                       Row(children: [
                         Expanded(
@@ -440,8 +454,9 @@ class _HomeScreenState extends State<HomeScreen> {
                               Icons.radio_button_checked,
                               'FROM',
                               _origin,
+                              _destination,
                               (value) => setState(() {
-                                _reversed = value == 'Vijayawada';
+                                _origin = value;
                                 _load();
                               }),
                             ),
@@ -460,8 +475,9 @@ class _HomeScreenState extends State<HomeScreen> {
                               Icons.location_on_outlined,
                               'TO',
                               _destination,
+                              _origin,
                               (value) => setState(() {
-                                _reversed = value == 'Srikakulam';
+                                _destination = value;
                                 _load();
                               }),
                             ),
@@ -471,12 +487,22 @@ class _HomeScreenState extends State<HomeScreen> {
                         IconButton.filledTonal(
                           tooltip: 'Reverse route',
                           onPressed: () => setState(() {
-                            _reversed = !_reversed;
+                            final previousOrigin = _origin;
+                            _origin = _destination;
+                            _destination = previousOrigin;
                             _load();
                           }),
                           icon: const Icon(Icons.swap_vert_rounded),
                         ),
                       ]),
+                      const SizedBox(height: 12),
+                      _DeparturePicker(
+                        value: _departureAt,
+                        onChanged: (value) => setState(() {
+                          _departureAt = value;
+                          _load();
+                        }),
+                      ),
                       const Divider(height: 24),
                       Row(children: [
                         Expanded(
@@ -587,6 +613,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 origin: _origin,
                                 destination: _destination,
                                 soc: _soc,
+                                departureAt: _departureAt,
                               ),
                             ),
                           ),
@@ -666,6 +693,7 @@ class _HomeScreenState extends State<HomeScreen> {
     IconData icon,
     String label,
     String value,
+    String unavailableStop,
     ValueChanged<String> onChanged,
   ) =>
       Row(
@@ -688,16 +716,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 value: value,
                 isDense: true,
                 underline: const SizedBox.shrink(),
-                items: const [
-                  DropdownMenuItem(
-                    value: 'Srikakulam',
-                    child: Text('Srikakulam'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'Vijayawada',
-                    child: Text('Vijayawada'),
-                  ),
-                ],
+                items: nh16PilotStops
+                    .where((stop) => stop == value || stop != unavailableStop)
+                    .map((stop) => DropdownMenuItem(
+                          value: stop,
+                          child: Text(stop),
+                        ))
+                    .toList(growable: false),
                 onChanged: (next) {
                   if (next != null) onChanged(next);
                 },
@@ -1705,6 +1730,7 @@ class _HotelBookingScreenState extends State<HotelBookingScreen> {
   bool _busy = false;
   bool _checking = false;
   String? _reservationId;
+  String? _razorpayOrderId;
   String? _statusMessage;
   Timer? _poll;
 
@@ -1714,7 +1740,7 @@ class _HotelBookingScreenState extends State<HotelBookingScreen> {
     _checkIn = DateUtils.dateOnly(DateTime.now().add(const Duration(days: 1)));
     _checkOut = _checkIn.add(const Duration(days: 1));
     _rooms = _loadRooms();
-    _razorpay.on(Razorpay.EVENT_PAYMENT_SUCCESS, (_) => _checkStatus());
+    _razorpay.on(Razorpay.EVENT_PAYMENT_SUCCESS, _onPaymentSuccess);
     _razorpay.on(Razorpay.EVENT_PAYMENT_ERROR, (_) => _checkStatus());
     _razorpay.on(Razorpay.EVENT_EXTERNAL_WALLET, (_) => _checkStatus());
   }
@@ -1835,6 +1861,7 @@ class _HotelBookingScreenState extends State<HotelBookingScreen> {
         throw StateError(
             'Payment order details are unavailable. Reservation status remains on the server.');
       }
+      _razorpayOrderId = '${payment['order_id']}';
       if (!mounted) return;
       setState(() {
         _busy = false;
@@ -1864,6 +1891,25 @@ class _HotelBookingScreenState extends State<HotelBookingScreen> {
     _poll?.cancel();
     _poll = Timer.periodic(const Duration(seconds: 10), (_) => _checkStatus());
     _checkStatus();
+  }
+
+  Future<void> _onPaymentSuccess(PaymentSuccessResponse response) async {
+    final orderId = response.orderId ?? _razorpayOrderId;
+    final paymentId = response.paymentId;
+    final signature = response.signature;
+    if (orderId != null && paymentId != null && signature != null) {
+      try {
+        await widget.app.driverRepository.verifyRazorpayCheckout(
+          orderId: orderId,
+          paymentId: paymentId,
+          signature: signature,
+        );
+      } catch (_) {
+        // Polling remains useful if the verification request temporarily fails;
+        // only the API's verified provider state can confirm the reservation.
+      }
+    }
+    await _checkStatus();
   }
 
   Future<void> _checkStatus() async {
@@ -2450,6 +2496,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
   bool _creating = false;
   bool _awaitingServerConfirmation = false;
   bool _checkingBackend = false;
+  bool _verifyingCheckout = false;
   StreamSubscription<void>? _bookingChanges;
   Timer? _statusFallback;
 
@@ -2512,9 +2559,29 @@ class _PaymentScreenState extends State<PaymentScreen> {
     }
   }
 
-  void _onSuccess(PaymentSuccessResponse _) {
+  Future<void> _onSuccess(PaymentSuccessResponse response) async {
     _awaitingServerConfirmation = true;
-    _checkBackend();
+    _verifyingCheckout = true;
+    final booking = _booking;
+    final paymentId = response.paymentId;
+    final signature = response.signature;
+    final orderId = response.orderId ?? booking?.orderId;
+    if (booking != null &&
+        orderId != null &&
+        paymentId != null &&
+        signature != null) {
+      try {
+        await widget.app.driverRepository.verifyRazorpayCheckout(
+          orderId: orderId,
+          paymentId: paymentId,
+          signature: signature,
+        );
+      } catch (_) {
+        // Keep checking the API; do not treat the native SDK callback as payment proof.
+      }
+    }
+    _verifyingCheckout = false;
+    await _checkBackend();
   }
 
   void _onPaymentError(PaymentFailureResponse _) {
@@ -2524,7 +2591,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
   Future<void> _checkBackend() async {
     final booking = _booking;
-    if (booking == null || _checkingBackend) return;
+    if (booking == null || _checkingBackend || _verifyingCheckout) return;
     _awaitingServerConfirmation = true;
     _checkingBackend = true;
     if (mounted)
@@ -2741,7 +2808,7 @@ class _DeparturePicker extends StatelessWidget {
               style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 4),
           const Text(
-              'This saves a route plan only; it does not reserve a charger.',
+              'Set when you expect to leave. Charger reservations are booked separately.',
               style: TextStyle(color: VoltColors.muted)),
           Row(children: [
             Expanded(
@@ -2770,11 +2837,13 @@ class RoutePlannerScreen extends StatefulWidget {
       required this.app,
       required this.origin,
       required this.destination,
-      required this.soc});
+      required this.soc,
+      required this.departureAt});
   final AppController app;
   final String origin;
   final String destination;
   final double? soc;
+  final DateTime departureAt;
   @override
   State<RoutePlannerScreen> createState() => _RoutePlannerScreenState();
 }
@@ -2795,7 +2864,7 @@ class _RoutePlannerScreenState extends State<RoutePlannerScreen> {
     _soc = widget.soc ??
         widget.app.activeVehicle?.currentSoc ??
         widget.app.profile?.currentSoc;
-    _departureAt = DateTime.now().add(const Duration(minutes: 10));
+    _departureAt = widget.departureAt;
     _chargeSaved = (widget.app.activeVehicle?.currentSoc ??
                 widget.app.profile?.currentSoc) !=
             null &&
@@ -3009,6 +3078,15 @@ class _RoutePlannerScreenState extends State<RoutePlannerScreen> {
             final distance = double.tryParse('${data['distance_km']}') ?? 0;
             final remaining =
                 double.tryParse('${data['estimated_remaining_soc']}') ?? 0;
+            final vehicle = widget.app.activeVehicle;
+            final batteryKwh =
+                vehicle?.batteryKwh ?? widget.app.profile?.batteryKwh ?? 0;
+            final efficiency = vehicle?.efficiencyKmPerKwh ??
+                widget.app.profile?.efficiencyKmPerKwh ??
+                0;
+            final vehicleName = vehicle?.displayName ??
+                widget.app.profile?.carModel ??
+                'EV profile';
             return ListView(padding: const EdgeInsets.all(18), children: [
               _DeparturePicker(
                 value: _departureAt,
@@ -3023,6 +3101,33 @@ class _RoutePlannerScreenState extends State<RoutePlannerScreen> {
                   origin: widget.origin,
                   destination: widget.destination),
               const SizedBox(height: 16),
+              VoltCard(
+                  child: Column(children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Trip details',
+                      style: Theme.of(context).textTheme.titleMedium),
+                ),
+                const SizedBox(height: 4),
+                _ReviewRow(
+                    label: 'Travel date',
+                    value: MaterialLocalizations.of(context)
+                        .formatMediumDate(_departureAt)),
+                _ReviewRow(
+                    label: 'Departure time',
+                    value: MaterialLocalizations.of(context)
+                        .formatTimeOfDay(TimeOfDay.fromDateTime(_departureAt))),
+                _ReviewRow(label: 'Vehicle', value: vehicleName),
+                _ReviewRow(
+                    label: 'Battery capacity',
+                    value: '${batteryKwh.toStringAsFixed(0)} kWh'),
+                _ReviewRow(
+                    label: 'Starting charge', value: '${(_soc ?? 0).round()}%'),
+                _ReviewRow(
+                    label: 'Efficiency',
+                    value: '${efficiency.toStringAsFixed(1)} km/kWh'),
+              ])),
+              const SizedBox(height: 12),
               VoltCard(
                   child: Column(children: [
                 _ReviewRow(

@@ -35,6 +35,9 @@ supabase/.temp/
 **/.gradle/
 **/.kotlin/
 apps/mobile/android/local.properties
+apps/mobile/android/key.properties
+apps/mobile/android/*.jks
+apps/mobile/android/*.keystore
 *.log
 supabase/.branches/
 supabase/migrations/.*.tmp

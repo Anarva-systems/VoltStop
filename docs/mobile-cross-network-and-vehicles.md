@@ -2,24 +2,26 @@
 
 ## Cross-network login
 
-Supabase OTP and the VoltStop API are separate network services. The API URL is supplied at build time through `API_BASE_URL`; the development default `http://10.0.2.2:8000/api/v1` is for the Android emulator only. It is not a routable AP Fiber/mobile-data endpoint. The repository has no verified public HTTPS API deployment, DNS name, or TLS certificate, so an APK cannot yet be configured or acceptance-tested across external networks.
+Supabase OTP and the VoltStop API are separate network services. The API URL is supplied at build time through `API_BASE_URL`. Emulator loopback (`10.0.2.2`) and laptop LAN IPs only work on networks that can route to the development machine; they do not work over ordinary 4G/5G mobile data. This workspace currently has no verified public HTTPS API deployment, DNS name, or TLS certificate, so cross-network sign-in cannot be completed until the FastAPI service is deployed again.
 
-Deploy the existing FastAPI service to an HTTPS application host before building a production APK. Configure the service with the existing production environment guard, a dedicated PostgreSQL/Neon connection, authenticated TLS Redis, Supabase URL/publishable token validation settings, vendor portal origin, Razorpay keys and webhook secret. Keep secrets in the host's secret store. Verify `/api/v1/health`, HTTPS certificate chain, Supabase bearer-token verification, CORS for the vendor site, and protected `/api/v1/profile` and `/api/v1/vendors/nearby` requests from a device on AP Fiber and a second network. The health endpoint alone does not prove authenticated access.
+The app now probes `/api/v1/ready` before it requests, resends, or verifies an OTP. If the API or a required backend dependency is down, it reports that no code was requested/used, so a user is not left at the profile screen after spending a code. This is a guard against the recurring failure path, not a substitute for a reachable API deployment.
 
-Build a local emulator debug APK from the repository root with:
-
-```powershell
-cd D:\voltstop\apps\mobile
-flutter build apk --debug --dart-define=APP_ENV=development --dart-define=API_BASE_URL=http://10.0.2.2:8000/api/v1
-```
-
-For an external-network production build, use only the verified HTTPS API origin:
+Builds should use `apps/mobile/build_apk.ps1`. It requires an explicit API URL, checks the exact API's `/health` and `/ready` responses before compiling, and refuses to produce an artifact when the backend is missing or not ready. For an Android emulator with the local API running:
 
 ```powershell
-flutter build apk --release --dart-define=APP_ENV=production --dart-define=API_BASE_URL=https://<verified-api-host>/api/v1
+cd D:\voltstop-1\production-work\apps\mobile
+./build_apk.ps1 -ApiBaseUrl http://10.0.2.2:8001/api/v1 -BuildType debug -AppEnvironment development
 ```
 
-The application displays a configuration error if `APP_ENV` is `staging` or `production` and the API URL is not HTTPS with a DNS host. Never ship the emulator or LAN URL as a production value.
+For a phone on the same Wi-Fi as the laptop, use the laptop's current LAN IP only after the phone can open the API's `/api/v1/health` URL in its browser. This is a temporary development setup and depends on the laptop, network routing, and firewall staying available.
+
+For 4G/5G and production, deploy FastAPI to a public HTTPS host first. Then build with that verified host and explicit Supabase project settings:
+
+```powershell
+./build_apk.ps1 -ApiBaseUrl https://<verified-api-host>/api/v1 -BuildType release -AppEnvironment production -SupabaseUrl https://<project>.supabase.co -SupabasePublishableKey <publishable-key>
+```
+
+The app now displays a configuration error when any build omits `API_BASE_URL`; it no longer silently uses an emulator-only default. The APK build script also checks the backend before building, so the deleted Vercel URL will fail preflight instead of being embedded into another APK.
 
 ## Vehicle migration and API
 
