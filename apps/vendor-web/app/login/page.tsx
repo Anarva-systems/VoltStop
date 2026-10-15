@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { resolveRole } from "@/services/resolve-role";
 import { Icon } from "@/components/portal";
 import { useVendorAuth } from "@/components/vendor-auth";
-import { formatSupabaseAuthError, supabaseBrowserClient, supabaseBrowserConfigurationError } from "@/services/supabase";
+import { formatSupabaseAuthError, isSupabaseEmailConfirmationError, supabaseBrowserClient, supabaseBrowserConfigurationError } from "@/services/supabase";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -17,6 +17,9 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
   const [resetMessage, setResetMessage] = useState("");
+  const [confirmationEmail, setConfirmationEmail] = useState("");
+  const [confirmationBusy, setConfirmationBusy] = useState(false);
+  const [confirmationMessage, setConfirmationMessage] = useState("");
   const [error, setError] = useState("");
   const configurationError = supabaseBrowserConfigurationError();
   const configured = configurationError === null;
@@ -32,6 +35,8 @@ export default function LoginPage() {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
+    setConfirmationEmail("");
+    setConfirmationMessage("");
     const client = supabaseBrowserClient();
     if (!client) {
       setError("Supabase sign-in is not configured for this deployment.");
@@ -45,7 +50,15 @@ export default function LoginPage() {
       router.replace(await resolveRole(data.session.access_token));
       router.refresh();
     } catch (reason) {
-      setError(formatSupabaseAuthError(reason));
+      if (isSupabaseEmailConfirmationError(reason)) {
+        setConfirmationEmail(email.trim());
+        setError("This account’s email is not confirmed yet, so sign-in is blocked. Resend the confirmation link below.");
+      } else if (reason instanceof Error && /invalid login credentials/i.test(reason.message)) {
+        setConfirmationEmail(email.trim());
+        setError("Sign-in failed. Check your email and password. If you just registered, the account may still need email confirmation; you can request a new link below.");
+      } else {
+        setError(formatSupabaseAuthError(reason));
+      }
     } finally {
       setBusy(false);
     }
@@ -78,6 +91,27 @@ export default function LoginPage() {
     }
   }
 
+  async function resendConfirmation() {
+    const client = supabaseBrowserClient();
+    if (!client || !confirmationEmail) return;
+    setError("");
+    setConfirmationMessage("");
+    setConfirmationBusy(true);
+    try {
+      const { error: resendError } = await client.auth.resend({
+        type: "signup",
+        email: confirmationEmail,
+        options: { emailRedirectTo: `${window.location.origin}/vendor/login` },
+      });
+      if (resendError) throw resendError;
+      setConfirmationMessage("Supabase accepted the resend request. Check spam; if no email arrives, the project owner needs to configure custom SMTP and review Supabase Auth email logs.");
+    } catch (reason) {
+      setError(formatSupabaseAuthError(reason));
+    } finally {
+      setConfirmationBusy(false);
+    }
+  }
+
   return <main className="auth-page">
     <section className="auth-art">
       <Link href="/" className="auth-brand"><span className="brand-symbol">V</span><span>VOLT<span className="brand-green">STOP</span></span></Link>
@@ -94,6 +128,13 @@ export default function LoginPage() {
       <button type="button" className="auth-switch auth-link-button" disabled={resetBusy || !configured} onClick={() => void sendPasswordReset()}>{resetBusy ? "Sending reset email…" : "Forgot password?"}</button>
       {error && <p role="alert" className="auth-message">{error}</p>}
       {resetMessage && <p role="status" className="auth-message auth-success-message">{resetMessage}</p>}
+      {confirmationEmail && <div className="auth-confirmation">
+        <button type="button" className="auth-switch auth-link-button" disabled={confirmationBusy || busy || !configured} onClick={() => void resendConfirmation()}>
+          {confirmationBusy ? "Sending confirmation…" : `Resend confirmation to ${confirmationEmail}`}
+        </button>
+        <p className="auth-hint">Supabase’s built-in email sender is restricted and rate-limited. For reliable delivery, configure a custom SMTP provider in the project’s Auth settings.</p>
+      </div>}
+      {confirmationMessage && <p role="status" className="auth-message auth-success-message">{confirmationMessage}</p>}
       {!configured && <div role="status" className="auth-config-warning">Supabase sign-in is unavailable. {configurationError ?? "Check the deployment configuration."}</div>}
       <p className="auth-switch">New partner? <Link href="/vendor/login">Start a vendor profile</Link></p>
       <p className="auth-switch"><Link href="/">← VoltStop home</Link></p>

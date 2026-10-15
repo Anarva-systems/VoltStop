@@ -109,6 +109,13 @@ export function formatSupabaseAuthError(
   return `Supabase rejected the configured public key. Project: ${diagnostic.projectHostname ?? "URL unavailable"}; URL source: ${diagnostic.urlSource}; key source: ${diagnostic.keySource}; key format: ${diagnostic.keyFormat}; project match: ${diagnostic.projectMatch}. Verify that the selected public key is active and belongs to this Supabase project.`;
 }
 
+export function isSupabaseEmailConfirmationError(reason: unknown): boolean {
+  if (!reason || typeof reason !== "object") return false;
+  const authError = reason as { code?: unknown; message?: unknown };
+  return authError.code === "email_not_confirmed" ||
+    (typeof authError.message === "string" && /email not confirmed|email not verified/i.test(authError.message));
+}
+
 export function supabaseBrowserConfigurationError(
   env: Record<string, string | undefined> = browserEnvironment,
 ): string | null {

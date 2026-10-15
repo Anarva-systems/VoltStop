@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/portal";
 import { useVendorAuth } from "@/components/vendor-auth";
 import { resolveRole } from "@/services/resolve-role";
-import { formatSupabaseAuthError, supabaseBrowserClient, supabaseBrowserConfigurationError } from "@/services/supabase";
+import { formatSupabaseAuthError, isSupabaseEmailConfirmationError, supabaseBrowserClient, supabaseBrowserConfigurationError } from "@/services/supabase";
 
 export default function VendorLoginPage() {
   const router = useRouter();
@@ -18,6 +18,8 @@ export default function VendorLoginPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [confirmationEmail, setConfirmationEmail] = useState("");
+  const [resendBusy, setResendBusy] = useState(false);
   const configurationError = supabaseBrowserConfigurationError();
   const configured = configurationError === null;
 
@@ -34,6 +36,7 @@ export default function VendorLoginPage() {
     event.preventDefault();
     setError("");
     setNotice("");
+    setConfirmationEmail("");
     const client = supabaseBrowserClient();
     if (!client) { setError("Supabase sign-in is not configured for this deployment."); return; }
     setBusy(true);
@@ -45,16 +48,55 @@ export default function VendorLoginPage() {
         router.replace(await resolveRole(data.session.access_token, { allowVendorSetup: true }));
         router.refresh();
       } else {
-        const { data, error: authError } = await client.auth.signUp({ email: email.trim(), password });
+        const { data, error: authError } = await client.auth.signUp({
+          email: email.trim(),
+          password,
+          options: { emailRedirectTo: `${window.location.origin}/vendor/login` },
+        });
         if (authError) throw authError;
         if (data.session) {
           router.replace(await resolveRole(data.session.access_token, { allowVendorSetup: true }));
           router.refresh();
-        } else setNotice("Check your email to confirm the new account, then return here to sign in.");
+        } else {
+          setConfirmationEmail(email.trim());
+          setNotice("Your account was created and needs email confirmation. Supabase accepted the request, but that does not guarantee the email was delivered. Check spam, or resend below.");
+        }
       }
     } catch (reason) {
-      setError(formatSupabaseAuthError(reason));
+      if (mode === "login" && isSupabaseEmailConfirmationError(reason)) {
+        setConfirmationEmail(email.trim());
+        setError("This account’s email is not confirmed yet, so sign-in is blocked. Resend the confirmation link below.");
+      } else if (reason instanceof Error && (
+        (mode === "login" && /invalid login credentials/i.test(reason.message)) ||
+        (mode === "signup" && /user already registered|already been registered/i.test(reason.message))
+      )) {
+        setConfirmationEmail(email.trim());
+        setError("Check your email and password. If this account was just registered, it may still need email confirmation; request a new link below.");
+      } else {
+        setError(formatSupabaseAuthError(reason));
+      }
     } finally { setBusy(false); }
+  }
+
+  async function resendConfirmation() {
+    const client = supabaseBrowserClient();
+    if (!client || !confirmationEmail) return;
+    setError("");
+    setNotice("");
+    setResendBusy(true);
+    try {
+      const { error: resendError } = await client.auth.resend({
+        type: "signup",
+        email: confirmationEmail,
+        options: { emailRedirectTo: `${window.location.origin}/vendor/login` },
+      });
+      if (resendError) throw resendError;
+      setNotice("Supabase accepted the resend request. Check spam; if no email arrives, the project owner needs to configure custom SMTP and review Supabase Auth email logs.");
+    } catch (reason) {
+      setError(formatSupabaseAuthError(reason));
+    } finally {
+      setResendBusy(false);
+    }
   }
 
   return <main className="auth-page">
@@ -73,8 +115,14 @@ export default function VendorLoginPage() {
           <button className="button button-primary auth-submit" disabled={busy || !configured}>{busy ? <><span className="spinner"/>Working…</> : <>{mode === "login" ? "Sign in" : "Create account"}<Icon name="arrow"/></>}</button>
         </form>
         {error && <p role="alert" className="auth-message">{error}</p>}
-        {notice && <p role="status" className="auth-message auth-success">{notice}</p>}
-        <div className="auth-switch">{mode === "login" ? "New to VoltStop? " : "Already registered? "}<button onClick={() => { setMode(mode === "login" ? "signup" : "login"); setError(""); setNotice(""); }}>{mode === "login" ? "Create an account" : "Sign in"}</button></div>
+        {notice && <p role="status" className="auth-message auth-success-message">{notice}</p>}
+        {confirmationEmail && <div className="auth-confirmation">
+          <button type="button" className="auth-switch auth-link-button" disabled={resendBusy || busy || !configured} onClick={() => void resendConfirmation()}>
+            {resendBusy ? "Sending confirmation…" : `Resend confirmation to ${confirmationEmail}`}
+          </button>
+          <p className="auth-hint">Supabase’s built-in email sender is restricted and rate-limited. For reliable delivery, configure a custom SMTP provider in the project’s Auth settings.</p>
+        </div>}
+        <div className="auth-switch">{mode === "login" ? "New to VoltStop? " : "Already registered? "}<button onClick={() => { setMode(mode === "login" ? "signup" : "login"); setError(""); setNotice(""); setConfirmationEmail(""); }}>{mode === "login" ? "Create an account" : "Sign in"}</button></div>
         {!configured && <div role="status" className="auth-config-warning">Supabase sign-in is unavailable. {configurationError ?? "Check the deployment configuration."}</div>}
         <p className="auth-switch"><Link href="/">← VoltStop home</Link></p>
       </div>
