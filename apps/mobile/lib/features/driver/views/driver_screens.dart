@@ -216,7 +216,7 @@ class _DriverShellState extends State<DriverShell> {
   Widget build(BuildContext context) {
     final pages = [
       HomeScreen(app: widget.app, onExplore: () => setState(() => _index = 1)),
-      DiscoveryScreen(app: widget.app),
+      DiscoveryScreen(app: widget.app, isActive: _index == 1),
       DriverTripsScreen(
         app: widget.app,
         reservations: BookingsScreen(app: widget.app),
@@ -268,11 +268,9 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _socSaveError;
   Timer? _routeDebounce;
   Timer? _liveRefreshDebounce;
-  Timer? _fallbackRefresh;
   StreamSubscription<void>? _catalogChanges;
   StreamSubscription<void>? _bookingChanges;
   late Future<Map<String, dynamic>> _route;
-  late Future<List<Pitstop>> _vendors;
   late Future<List<Booking>> _bookings;
 
   DriverProfile get _profile => widget.app.profile ?? const DriverProfile();
@@ -293,10 +291,6 @@ class _HomeScreenState extends State<HomeScreen> {
           (_) => _scheduleLiveRefresh(),
           onError: (_) {},
         );
-    _fallbackRefresh = Timer.periodic(
-      const Duration(seconds: 30),
-      (_) => _scheduleLiveRefresh(),
-    );
   }
 
   void _scheduleLiveRefresh() {
@@ -305,7 +299,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       final repository = widget.app.driverRepository;
       setState(() {
-        _vendors = repository.nearbyPitstops();
+        _route = _previewRoute();
         _bookings = repository.bookings();
       });
     });
@@ -357,7 +351,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _load() {
     _route = _previewRoute();
-    _vendors = widget.app.driverRepository.nearbyPitstops();
     _bookings = widget.app.driverRepository.bookings();
   }
 
@@ -365,7 +358,6 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _routeDebounce?.cancel();
     _liveRefreshDebounce?.cancel();
-    _fallbackRefresh?.cancel();
     _catalogChanges?.cancel();
     _bookingChanges?.cancel();
     super.dispose();
@@ -630,7 +622,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: 19),
                 Row(children: [
                   Expanded(
-                    child: Text('Stops worth the pause',
+                    child: Text('Stops on your route',
                         style: Theme.of(context).textTheme.titleLarge),
                   ),
                   TextButton(
@@ -638,34 +630,39 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: const Text('Explore all'),
                   ),
                 ]),
-                Text('Charging, food and rest along the corridor',
+                Text('Charging, food and stays · $_origin to $_destination',
                     style: Theme.of(context).textTheme.bodySmall),
                 const SizedBox(height: 11),
-                FutureBuilder<List<Pitstop>>(
-                  future: _vendors,
+                FutureBuilder<Map<String, dynamic>>(
+                  future: _route,
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const VoltLoading(label: 'Finding pitstops…');
+                      return const VoltLoading(
+                          label: 'Finding stops along your route…');
                     }
                     if (snapshot.hasError) {
                       return VoltError(
-                        message: 'Pitstops could not be loaded.',
+                        message: 'Stops for this route could not be loaded.',
                         onRetry: () {
-                          setState(() {
-                            _vendors =
-                                widget.app.driverRepository.nearbyPitstops();
-                          });
+                          setState(() => _route = _previewRoute());
                         },
                       );
                     }
-                    if (snapshot.data!.isEmpty) {
-                      return const VoltCard(
-                        child: Text('No pitstops are listed on this route yet.',
-                            style: TextStyle(color: VoltColors.muted)),
+                    final data = snapshot.data ?? const <String, dynamic>{};
+                    final stops = _routePitstops(data);
+                    if (stops.isEmpty) {
+                      final hasVehicle = widget.app.profileComplete;
+                      return VoltCard(
+                        child: Text(
+                          hasVehicle
+                              ? 'No partner stops are listed near this route yet. Try Explore to search around a town or your current location.'
+                              : 'Add your EV details and current battery charge to see route stops and energy estimates.',
+                          style: const TextStyle(color: VoltColors.muted),
+                        ),
                       );
                     }
                     return Column(
-                      children: snapshot.data!
+                      children: stops
                           .take(2)
                           .map((vendor) => Padding(
                                 padding: const EdgeInsets.only(bottom: 11),
@@ -826,19 +823,34 @@ class _RoutePreview extends StatelessWidget {
           final lng = double.tryParse('${vendor['lng']}');
           final id = vendor['id']?.toString();
           if (lat == null || lng == null || id == null) continue;
+          final pitstop = Pitstop.fromJson(Map<String, dynamic>.from(stop));
           markers.add(Marker(
               point: LatLng(lat, lng),
               width: 36,
               height: 36,
               child: Tooltip(
-                  message: '${vendor['name'] ?? 'Charging location'}',
-                  child: const Icon(Icons.ev_station,
-                      color: VoltColors.green, size: 26))));
+                  message:
+                      '${vendor['name'] ?? 'Route stop'} · ${_serviceName(pitstop.type)}',
+                  child: Icon(_pitstopIcon(pitstop),
+                      color: _pitstopColor(pitstop), size: 26))));
         }
       }
-      return ClipRRect(
-          borderRadius: BorderRadius.circular(18),
-          child: SizedBox(
+      Widget legend(IconData icon, String label, Color color) => Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 14, color: color),
+              const SizedBox(width: 4),
+              Text(label,
+                  style:
+                      const TextStyle(color: VoltColors.muted, fontSize: 10)),
+            ],
+          );
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: SizedBox(
               height: 205,
               child: FlutterMap(
                 options: MapOptions(
@@ -859,7 +871,21 @@ class _RoutePreview extends StatelessWidget {
                             Uri.parse('https://openstreetmap.org/copyright'))),
                   ]),
                 ],
-              )));
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 13,
+            runSpacing: 6,
+            children: [
+              legend(Icons.ev_station_rounded, 'Charging', VoltColors.forest),
+              legend(Icons.restaurant_rounded, 'Food', VoltColors.green),
+              legend(Icons.hotel_rounded, 'Stay', VoltColors.cyan),
+            ],
+          ),
+        ],
+      );
     }
     return VoltCard(
         padding: const EdgeInsets.all(12),
@@ -1007,13 +1033,13 @@ class PitstopCard extends StatelessWidget {
                                   .toList()),
                       const SizedBox(height: 10),
                       Row(children: [
-                        const Icon(Icons.circle,
-                            size: 8, color: VoltColors.green),
-                        const SizedBox(width: 6),
+                        const Icon(Icons.schedule_rounded,
+                            size: 15, color: VoltColors.muted),
+                        const SizedBox(width: 5),
                         Text(
                             vendor.availableSlotCount > 0
-                                ? '${vendor.availableSlotCount} slots listed'
-                                : 'Check availability',
+                                ? '${vendor.availableSlotCount} booking times open'
+                                : 'Check booking times',
                             style: const TextStyle(
                                 color: VoltColors.muted, fontSize: 12))
                       ]),
@@ -1109,27 +1135,67 @@ String _serviceName(String value) => value
         word.isEmpty ? word : '${word[0].toUpperCase()}${word.substring(1)}')
     .join(' ');
 
+List<Pitstop> _routePitstops(Map<String, dynamic>? data) {
+  final items = data?['recommended_pitstops'];
+  if (items is! List) return const [];
+  return items
+      .whereType<Map>()
+      .map((item) => Pitstop.fromJson(Map<String, dynamic>.from(item)))
+      .where((item) => item.id.isNotEmpty)
+      .toList(growable: false);
+}
+
+IconData _pitstopIcon(Pitstop vendor) {
+  if (vendor.matchesDiscoveryCategory('Hotels')) return Icons.hotel_rounded;
+  if (vendor.matchesDiscoveryCategory('Food')) return Icons.restaurant_rounded;
+  return Icons.ev_station_rounded;
+}
+
+Color _pitstopColor(Pitstop vendor) {
+  if (vendor.matchesDiscoveryCategory('Hotels')) return VoltColors.cyan;
+  if (vendor.matchesDiscoveryCategory('Food')) return VoltColors.green;
+  return VoltColors.forest;
+}
+
 class DiscoveryScreen extends StatefulWidget {
-  const DiscoveryScreen({super.key, required this.app});
+  const DiscoveryScreen({
+    super.key,
+    required this.app,
+    this.isActive = true,
+  });
   final AppController app;
+  final bool isActive;
   @override
   State<DiscoveryScreen> createState() => _DiscoveryScreenState();
 }
 
-class _DiscoveryScreenState extends State<DiscoveryScreen> {
+class _DiscoveryScreenState extends State<DiscoveryScreen>
+    with WidgetsBindingObserver {
   late Future<List<Pitstop>> _vendors;
   StreamSubscription<void>? _catalogChanges;
+  StreamSubscription<Position>? _positionSubscription;
   Timer? _refreshDebounce;
-  Timer? _fallbackRefresh;
   String _filter = 'All';
   String _query = '';
   bool _map = false;
+  bool _nearbyAlertsEnabled = false;
+  bool _startingNearbyAlerts = false;
+  bool _refreshingForAlerts = false;
+  bool _appIsResumed = true;
+  String? _nearbyAlertMessage;
+  LatLng? _searchCenter;
+  LatLng? _lastAlertLookupPoint;
+  DateTime? _lastAlertLookupAt;
+  List<Pitstop> _nearbyAlertStations = const [];
+  final Map<String, DateTime> _recentlyAlertedStations = {};
+
   void _searchMapArea(LatLng center) {
+    _searchCenter = center;
     setState(() {
       _vendors = widget.app.driverRepository.nearbyPitstops(
         lat: center.latitude,
         lng: center.longitude,
-        radiusKm: 100,
+        radiusKm: 50,
       );
     });
   }
@@ -1138,16 +1204,13 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final repository = widget.app.driverRepository;
     _vendors = repository.nearbyPitstops();
     _catalogChanges = repository.watchPitstopDirectoryChanges().listen(
           (_) => _scheduleRefresh(),
           onError: (_) {},
         );
-    _fallbackRefresh = Timer.periodic(
-      const Duration(seconds: 30),
-      (_) => _scheduleRefresh(),
-    );
   }
 
   void _scheduleRefresh() {
@@ -1155,7 +1218,11 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
     _refreshDebounce = Timer(const Duration(milliseconds: 180), () {
       if (mounted) {
         setState(() {
-          _vendors = widget.app.driverRepository.nearbyPitstops();
+          _vendors = widget.app.driverRepository.nearbyPitstops(
+            lat: _searchCenter?.latitude ?? AppConfig.discoveryFallbackLat,
+            lng: _searchCenter?.longitude ?? AppConfig.discoveryFallbackLng,
+            radiusKm: 50,
+          );
         });
       }
     });
@@ -1163,10 +1230,209 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _refreshDebounce?.cancel();
-    _fallbackRefresh?.cancel();
     _catalogChanges?.cancel();
+    _positionSubscription?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant DiscoveryScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isActive && !widget.isActive && _nearbyAlertsEnabled) {
+      unawaited(
+          _pauseNearbyAlerts('Nearby alerts pause when you leave Explore.'));
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appIsResumed = state == AppLifecycleState.resumed;
+    if (state != AppLifecycleState.resumed && _nearbyAlertsEnabled) {
+      unawaited(_pauseNearbyAlerts(
+          'Nearby alerts pause when VoltStop is in the background.'));
+    }
+  }
+
+  Future<void> _pauseNearbyAlerts(String message) async {
+    await _positionSubscription?.cancel();
+    _positionSubscription = null;
+    if (mounted) {
+      setState(() {
+        _nearbyAlertsEnabled = false;
+        _nearbyAlertMessage = message;
+      });
+    }
+  }
+
+  Future<LatLng> _getCurrentPoint() async {
+    if (!await Geolocator.isLocationServiceEnabled()) {
+      throw const _LocationFailure(
+          'Turn on location services to use nearby alerts.');
+    }
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.deniedForever) {
+      throw const _LocationFailure(
+          'Location is blocked for VoltStop. Enable it in app settings to use nearby alerts.');
+    }
+    if (permission == LocationPermission.denied) {
+      throw const _LocationFailure(
+          'Allow location access to use nearby alerts.');
+    }
+    final position = await Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.medium,
+        timeLimit: Duration(seconds: 12),
+      ),
+    );
+    return LatLng(position.latitude, position.longitude);
+  }
+
+  Future<void> _toggleNearbyAlerts(bool enabled) async {
+    if (!enabled) {
+      await _positionSubscription?.cancel();
+      _positionSubscription = null;
+      if (mounted) {
+        setState(() {
+          _nearbyAlertsEnabled = false;
+          _nearbyAlertMessage = 'Nearby alerts are paused.';
+        });
+      }
+      return;
+    }
+    if (!widget.isActive || !_appIsResumed) return;
+    if (_startingNearbyAlerts || _nearbyAlertsEnabled) return;
+    setState(() {
+      _startingNearbyAlerts = true;
+      _nearbyAlertMessage = null;
+    });
+    try {
+      final point = await _getCurrentPoint();
+      final stations = await widget.app.driverRepository.nearbyPitstops(
+        lat: point.latitude,
+        lng: point.longitude,
+        radiusKm: 50,
+      );
+      if (!mounted || !widget.isActive || !_appIsResumed) return;
+      _searchCenter = point;
+      _lastAlertLookupPoint = point;
+      _lastAlertLookupAt = DateTime.now();
+      setState(() {
+        _vendors = Future.value(stations);
+        _nearbyAlertStations = stations;
+        _nearbyAlertsEnabled = true;
+        _nearbyAlertMessage =
+            'Alerts run while Explore is open. Charger status is from partner listings, not live plug telemetry.';
+      });
+      _showNearestChargingAlert(point);
+      _positionSubscription = Geolocator.getPositionStream(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.medium,
+          distanceFilter: 1000,
+        ),
+      ).listen(_onAlertPosition, onError: (_) {
+        if (mounted) {
+          setState(() {
+            _nearbyAlertsEnabled = false;
+            _nearbyAlertMessage =
+                'Location updates stopped. Nearby alerts are paused.';
+          });
+        }
+      });
+    } on _LocationFailure catch (error) {
+      if (mounted) setState(() => _nearbyAlertMessage = error.message);
+    } on LocationServiceDisabledException {
+      if (mounted) {
+        setState(() => _nearbyAlertMessage =
+            'Location services are off. Turn them on to use nearby alerts.');
+      }
+    } on PermissionDefinitionsNotFoundException {
+      if (mounted) {
+        setState(() => _nearbyAlertMessage =
+            'This app build has no location permission description.');
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _nearbyAlertMessage =
+            'Could not load nearby charging stops. Check your connection and retry.');
+      }
+    } finally {
+      if (mounted) setState(() => _startingNearbyAlerts = false);
+    }
+  }
+
+  Future<void> _onAlertPosition(Position position) async {
+    if (!widget.isActive || !_appIsResumed || !_nearbyAlertsEnabled) return;
+    final now = DateTime.now();
+    final previous = _lastAlertLookupPoint;
+    final movedMeters = previous == null
+        ? double.infinity
+        : Geolocator.distanceBetween(previous.latitude, previous.longitude,
+            position.latitude, position.longitude);
+    final lookupIsDue = previous == null ||
+        movedMeters >= 10000 ||
+        now.difference(_lastAlertLookupAt ?? DateTime(2000)) >=
+            const Duration(minutes: 10);
+    if (lookupIsDue && !_refreshingForAlerts) {
+      _refreshingForAlerts = true;
+      try {
+        final stations = await widget.app.driverRepository.nearbyPitstops(
+          lat: position.latitude,
+          lng: position.longitude,
+          radiusKm: 50,
+        );
+        _nearbyAlertStations = stations;
+        _lastAlertLookupPoint = LatLng(position.latitude, position.longitude);
+        _lastAlertLookupAt = now;
+        _searchCenter = _lastAlertLookupPoint;
+        if (mounted) setState(() => _vendors = Future.value(stations));
+      } catch (_) {
+        // Keep the last successful nearby results while connectivity recovers.
+      } finally {
+        _refreshingForAlerts = false;
+      }
+    }
+
+    _showNearestChargingAlert(LatLng(position.latitude, position.longitude));
+  }
+
+  void _showNearestChargingAlert(LatLng point) {
+    final now = DateTime.now();
+    if (!_nearbyAlertsEnabled) return;
+    final candidates = _nearbyAlertStations
+        .where((vendor) =>
+            vendor.matchesDiscoveryCategory('EV Charging') &&
+            vendor.lat != null &&
+            vendor.lng != null)
+        .map((vendor) => MapEntry(
+            vendor,
+            Geolocator.distanceBetween(
+                point.latitude, point.longitude, vendor.lat!, vendor.lng!)))
+        .where((entry) => entry.value <= 5000)
+        .toList()
+      ..sort((a, b) => a.value.compareTo(b.value));
+    if (candidates.isEmpty || !mounted) return;
+    final nearest = candidates.first;
+    final lastAlert = _recentlyAlertedStations[nearest.key.id];
+    if (lastAlert != null &&
+        now.difference(lastAlert) < const Duration(minutes: 45)) {
+      return;
+    }
+    _recentlyAlertedStations[nearest.key.id] = now;
+    _recentlyAlertedStations.removeWhere(
+        (_, time) => now.difference(time) > const Duration(hours: 2));
+    final distanceKm = nearest.value / 1000;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(
+            '${nearest.key.name} is ${distanceKm.toStringAsFixed(1)} km away. Live charger status is not available.'),
+        duration: const Duration(seconds: 6),
+      ));
   }
 
   bool _matches(Pitstop vendor) {
@@ -1194,6 +1460,14 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
                       .textTheme
                       .bodyMedium
                       ?.copyWith(color: VoltColors.muted)),
+              const SizedBox(height: 7),
+              Text(
+                'Charging points are partner listings. Live connector availability is not yet linked to a charge-network provider.',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: VoltColors.muted),
+              ),
               const SizedBox(height: 17),
               VoltCard(
                   padding: const EdgeInsets.all(10),
@@ -1201,15 +1475,69 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
                     Icon(Icons.route, color: VoltColors.cyan),
                     SizedBox(width: 9),
                     Expanded(
-                        child: Text('NH-16: Srikakulam ⇄ Vijayawada',
+                        child: Text('NH-16 pilot · Srikakulam ⇄ Vijayawada',
                             style: TextStyle(
                                 color: VoltColors.muted, fontSize: 12))),
-                    Text('Pilot route',
-                        style: TextStyle(
-                            color: VoltColors.green,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w800))
+                    Icon(Icons.bolt_rounded, color: VoltColors.green, size: 18)
                   ])),
+              const SizedBox(height: 10),
+              VoltCard(
+                padding: const EdgeInsets.fromLTRB(13, 8, 9, 8),
+                child: Row(children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: VoltColors.elevated,
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                    child: const Icon(Icons.notifications_active_outlined,
+                        color: VoltColors.forest, size: 19),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Nearby charger alerts',
+                            style: Theme.of(context).textTheme.titleSmall),
+                        Text(
+                          _nearbyAlertsEnabled
+                              ? 'While Explore is open'
+                              : 'Get an in-app alert within 5 km',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(color: VoltColors.muted),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (_startingNearbyAlerts)
+                    const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  else
+                    Switch.adaptive(
+                      value: _nearbyAlertsEnabled,
+                      onChanged: _toggleNearbyAlerts,
+                    ),
+                ]),
+              ),
+              if (_nearbyAlertMessage != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(5, 7, 5, 0),
+                  child: Text(_nearbyAlertMessage!,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: VoltColors.muted)),
+                ),
               const SizedBox(height: 12),
               TextField(
                   onChanged: (value) => setState(() => _query = value),
@@ -1233,7 +1561,7 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
                           .toList())),
               const SizedBox(height: 14),
               Row(children: [
-                Text('Places along your route',
+                Text('Places near your search area',
                     style: Theme.of(context).textTheme.titleMedium),
                 const Spacer(),
                 TextButton.icon(
@@ -1341,6 +1669,7 @@ class _DiscoveryMapState extends State<_DiscoveryMap> {
         _selectedPoint = point;
       });
       if (_mapReady) _controller.move(point, 13);
+      widget.onSearchArea(point);
     } on _LocationFailure catch (error) {
       if (mounted) setState(() => _locationMessage = error.message);
     } on LocationServiceDisabledException {
@@ -1396,8 +1725,8 @@ class _DiscoveryMapState extends State<_DiscoveryMap> {
                   height: 36,
                   child: Tooltip(
                       message: v.name,
-                      child: const Icon(Icons.location_on,
-                          color: VoltColors.cyan, size: 28)),
+                      child: Icon(_pitstopIcon(v),
+                          color: _pitstopColor(v), size: 28)),
                 ))
             .toList();
         if (_selectedPoint != null) {
@@ -1424,7 +1753,7 @@ class _DiscoveryMapState extends State<_DiscoveryMap> {
               Row(children: [
                 const Expanded(
                     child: Text(
-                        'Tap the map to choose an area. Location access is only requested when you ask to center here.',
+                        'Choose an area on the map, or use your location to find nearby places.',
                         style:
                             TextStyle(color: VoltColors.muted, fontSize: 11))),
                 const SizedBox(width: 8),
@@ -2857,7 +3186,6 @@ class _RoutePlannerScreenState extends State<RoutePlannerScreen> {
   String? _chargeError;
   StreamSubscription<void>? _catalogChanges;
   Timer? _refreshDebounce;
-  Timer? _fallbackRefresh;
   @override
   void initState() {
     super.initState();
@@ -2875,16 +3203,11 @@ class _RoutePlannerScreenState extends State<RoutePlannerScreen> {
     _catalogChanges = widget.app.driverRepository
         .watchPitstopDirectoryChanges()
         .listen((_) => _scheduleRefresh(), onError: (_) {});
-    _fallbackRefresh = Timer.periodic(
-      const Duration(seconds: 60),
-      (_) => _scheduleRefresh(),
-    );
   }
 
   @override
   void dispose() {
     _refreshDebounce?.cancel();
-    _fallbackRefresh?.cancel();
     _catalogChanges?.cancel();
     super.dispose();
   }
@@ -3087,6 +3410,7 @@ class _RoutePlannerScreenState extends State<RoutePlannerScreen> {
             final vehicleName = vehicle?.displayName ??
                 widget.app.profile?.carModel ??
                 'EV profile';
+            final routeStops = _routePitstops(data);
             return ListView(padding: const EdgeInsets.all(18), children: [
               _DeparturePicker(
                 value: _departureAt,
@@ -3155,34 +3479,47 @@ class _RoutePlannerScreenState extends State<RoutePlannerScreen> {
                   'These values are estimates based on your default efficiency. Actual consumption varies with speed, weather, terrain, traffic and vehicle load.',
                   style: TextStyle(color: VoltColors.warning, fontSize: 12)),
               const SizedBox(height: 18),
-              Text(
-                  'Recommended pitstops (${(data['recommended_pitstops'] as List? ?? []).length})',
+              Text('Route stops (${routeStops.length})',
                   style: Theme.of(context).textTheme.titleMedium),
-              ...((data['recommended_pitstops'] as List? ?? [])
-                  .whereType<Map>()
-                  .map((item) => Padding(
-                      padding: const EdgeInsets.only(top: 10),
-                      child: ListTile(
-                          tileColor: VoltColors.surface,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14)),
-                          leading: const Icon(Icons.ev_station,
-                              color: VoltColors.green),
-                          title: Text(
-                              '${(item['vendor'] as Map?)?['name'] ?? 'Recommended pitstop'}'),
-                          subtitle: Text(
-                              '${item['distance_km'] ?? '—'} km from route'),
-                          trailing: const Icon(Icons.chevron_right),
-                          onTap: () {
-                            final vendor = (item['vendor'] as Map?) ?? const {};
-                            final id = vendor['id']?.toString();
-                            if (id != null)
-                              Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                      builder: (_) => PitstopDetailsScreen(
-                                          app: widget.app, vendorId: id)));
-                          })))),
+              const SizedBox(height: 4),
+              const Text(
+                'Stations are partner listings. Live charger plug status requires a provider connection.',
+                style: TextStyle(color: VoltColors.muted, fontSize: 12),
+              ),
+              if (routeStops.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(top: 10),
+                  child: VoltCard(
+                    child: Text(
+                      'No partner stops are listed within 15 km of this route yet. Search nearby towns in Explore.',
+                      style: TextStyle(color: VoltColors.muted),
+                    ),
+                  ),
+                )
+              else
+                ...routeStops.map((vendor) {
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: ListTile(
+                      tileColor: VoltColors.surface,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                      leading: Icon(_pitstopIcon(vendor),
+                          color: _pitstopColor(vendor)),
+                      title: Text(vendor.name),
+                      subtitle: Text(
+                          '${_serviceName(vendor.type)} · ${vendor.distanceKm.toStringAsFixed(1)} km from route'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => PitstopDetailsScreen(
+                              app: widget.app, vendorId: vendor.id),
+                        ),
+                      ),
+                    ),
+                  );
+                }),
             ]);
           }));
 }

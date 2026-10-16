@@ -12,19 +12,20 @@ a { color:inherit; text-decoration:none; }
 ::selection { background:rgba(32,200,107,.28); }
 
 .portal-frame { min-height:100vh; display:flex; background:radial-gradient(ellipse at 70% -20%,rgba(33,91,119,.18),transparent 40%),var(--bg); }
-.portal-sidebar { position:fixed; inset:0 auto 0 0; z-index:30; width:254px; display:flex; flex-direction:column; padding:25px 16px 16px; background:#091624; border-right:1px solid #1b2c3f; }
-.brand-lockup { display:flex; align-items:center; gap:11px; padding:0 12px 28px; font-weight:900; font-size:16px; letter-spacing:1.2px; }
+.portal-sidebar { position:fixed; inset:0 auto 0 0; z-index:30; width:254px; height:100vh; height:100dvh; display:flex; flex-direction:column; overflow:hidden; padding:25px 16px 16px; background:#091624; border-right:1px solid #1b2c3f; }
+.brand-lockup { display:flex; flex:0 0 auto; align-items:center; gap:11px; padding:0 12px 28px; font-weight:900; font-size:16px; letter-spacing:1.2px; }
 .brand-symbol { display:grid; width:38px; height:38px; place-items:center; border:1px solid rgba(67,215,238,.45); border-radius:12px; background:linear-gradient(145deg,rgba(32,200,107,.24),rgba(67,215,238,.12)); color:var(--green); font-size:19px; font-style:italic; }
 .brand-green { color:var(--green); }
 .brand-lockup small { display:block; margin-top:3px; color:#8295a9; font-size:9px; font-weight:700; letter-spacing:2.1px; }
-.sidebar-caption { margin:6px 13px 10px; color:#72869b; font-size:10px; font-weight:800; letter-spacing:1.4px; }
-.sidebar-nav { display:grid; gap:4px; }
+.sidebar-caption { flex:0 0 auto; margin:6px 13px 10px; color:#72869b; font-size:10px; font-weight:800; letter-spacing:1.4px; }
+.sidebar-nav { display:grid; min-height:0; flex:1 1 auto; align-content:start; gap:4px; overflow-x:hidden; overflow-y:auto; overscroll-behavior:contain; padding-right:2px; scrollbar-color:#c8d5cc transparent; scrollbar-width:thin; }
 .nav-link { position:relative; display:flex; align-items:center; gap:12px; width:100%; border:1px solid transparent; border-radius:11px; padding:11px 12px; background:transparent; color:#a7b5c4; text-align:left; font-size:13px; font-weight:600; transition:background .16s,color .16s,border-color .16s; }
+.nav-link:focus-visible,.mobile-menu-button:focus-visible,.mobile-nav a:focus-visible { outline:2px solid #29804b; outline-offset:2px; }
 .nav-link:hover { color:var(--text); background:#101f2f; }
 .nav-link-active { color:#dfffea; border-color:rgba(32,200,107,.2); background:linear-gradient(90deg,rgba(32,200,107,.15),rgba(32,200,107,.04)); }
 .nav-link-active svg { color:var(--green); }
 .nav-live-dot { width:7px; height:7px; margin-left:auto; border-radius:50%; background:var(--green); box-shadow:0 0 12px rgba(32,200,107,.8); }
-.sidebar-bottom { margin-top:auto; }
+.sidebar-bottom { flex:0 0 auto; margin-top:auto; }
 .support-card { display:flex; align-items:center; gap:10px; margin:0 4px 12px; border:1px solid #26394d; border-radius:12px; padding:13px 11px; background:#0d1b2a; }
 .support-pulse,.topbar-live i { width:8px; height:8px; flex:none; border-radius:50%; background:var(--green); box-shadow:0 0 10px rgba(32,200,107,.6); }
 .support-card strong,.support-card span { display:block; }
@@ -244,7 +245,7 @@ a { color:inherit; text-decoration:none; }
   .mobile-menu-button { display:grid; width:34px; height:34px; place-items:center; border:1px solid var(--line); border-radius:9px; background:#112033; color:var(--text); }
   .breadcrumb { flex:1; }
   .topbar-live,.topbar-divider { display:none; }
-  .mobile-nav { position:sticky; top:62px; z-index:19; display:flex; overflow-x:auto; gap:6px; border-bottom:1px solid var(--line); padding:8px 16px; background:#0b1827; }
+  .mobile-nav { position:sticky; top:62px; z-index:25; display:flex; overflow-x:auto; gap:6px; border-bottom:1px solid var(--line); padding:8px 16px; background:#0b1827; overscroll-behavior-x:contain; scrollbar-width:thin; }
   .mobile-nav a { display:flex; flex:none; align-items:center; gap:7px; border:1px solid #26384b; border-radius:8px; padding:8px 10px; color:#acbdca; font-size:10px; }
   .mobile-nav a:hover { border-color:rgba(32,200,107,.4); color:#a1f1b8; }
   .portal-content { padding:26px 20px 38px; }
@@ -365,12 +366,19 @@ body { background:var(--bg); color:var(--text); }
 .location-picker-toolbar,.location-picker-footer { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .location-picker-toolbar p { margin:0; color:#65736a; font-size:12px; line-height:1.45; }
 .location-picker-footer { color:#59685f; font-size:11px; }
-.location-map { height:300px; overflow:hidden; border:1px solid #d6e0d9; border-radius:12px; background:#edf2ee; }
-.location-map-canvas { width:100%; height:100%; }
+.location-map { position:relative; z-index:0; isolation:isolate; height:300px; overflow:hidden; border:1px solid #d6e0d9; border-radius:12px; background:#edf2ee; }
+.location-map-canvas { position:relative; z-index:0; isolation:isolate; width:100%; height:100%; }
 .location-map-loading { display:grid; min-height:150px; place-items:center; border:1px solid #d6e0d9; border-radius:12px; color:#59685f; background:#f8faf8; }
+.mobile-nav a.mobile-nav-active { border-color:#b9ddc4; background:#eff8f1; color:#21683b; }
 .voltstop-map-marker { background:transparent; border:0; }
 .voltstop-map-marker span { display:block; width:24px; height:24px; border:3px solid #fff; border-radius:50% 50% 50% 0; transform:rotate(-45deg); background:#187b43; box-shadow:0 2px 8px #10251755; }
 @media(max-width:650px) { .location-picker-toolbar,.location-picker-footer { align-items:stretch; flex-direction:column; } .location-picker-toolbar .button,.location-picker-footer .button { width:100%; } .location-map { height:260px; } }
+@media (min-width:1024px) and (max-height:760px) {
+  .portal-sidebar { padding-top:14px; padding-bottom:10px; }
+  .brand-lockup { padding-bottom:14px; }
+  .sidebar-bottom .support-card { display:none; }
+  .sidebar-nav .nav-link { padding-top:8px; padding-bottom:8px; }
+}
 .tab-button.active { color:#21683b; }
 .state-count { background:#eff4f0; color:#526258; }
 .detail-field span { color:#718078; }

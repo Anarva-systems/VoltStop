@@ -72,21 +72,21 @@ export function PortalShell({ children }: { children: React.ReactNode }) {
       </Link>
       <div className="sidebar-caption">WORKSPACE</div>
       <nav className="sidebar-nav" aria-label="Vendor workspace">
-        {navigation.map(([href, label, icon]) => <Link key={href} href={href} className={`nav-link ${pathname === href || (href !== "/vendor/dashboard" && pathname.startsWith(href)) ? "nav-link-active" : ""}`}>
-          <Icon name={icon} /><span>{label}</span>{href === "/vendor/requests" && <span className="nav-live-dot" />}
+        {navigation.map(([href, label, icon]) => <Link key={href} href={href} aria-current={pathname === href ? "page" : undefined} className={`nav-link ${pathname === href || (href !== "/vendor/dashboard" && pathname.startsWith(href)) ? "nav-link-active" : ""}`}>
+          <Icon name={icon} /><span>{label}</span>
         </Link>)}
       </nav>
-      <div className="sidebar-bottom"><div className="support-card"><span className="support-pulse"/><div><strong>NH-16 partner network</strong><span>Operations are live</span></div></div>
+      <div className="sidebar-bottom"><div className="support-card"><span className="support-pulse"/><div><strong>Partner tools</strong><span>Bookings, services and profile</span></div></div>
         <button className="nav-link sidebar-logout" onClick={logout}><Icon name="logout"/><span>Sign out</span></button>
       </div>
     </aside>
     <div className="portal-main">
       <header className="portal-topbar">
-        <button className="mobile-menu-button" aria-label="Toggle navigation" onClick={() => setMobileNav((value) => !value)}><Icon name={mobileNav ? "close" : "grid"} /></button>
+        <button className="mobile-menu-button" aria-label="Toggle navigation" aria-expanded={mobileNav} aria-controls="vendor-mobile-navigation" onClick={() => setMobileNav((value) => !value)}><Icon name={mobileNav ? "close" : "grid"} /></button>
         <div className="breadcrumb">Workspace <span>/</span> <strong>{activeLabel}</strong></div>
-        <div className="topbar-right"><span className="topbar-live"><i/> Network live</span><div className="topbar-divider"/><div className="account-chip"><span className="avatar-circle">{(user?.email?.[0] ?? user?.phone?.[0] ?? "V").toUpperCase()}</span><span className="account-email">{user?.email ?? user?.phone ?? "Vendor account"}</span></div></div>
+        <div className="topbar-right"><span className="topbar-live"><i/> Signed in</span><div className="topbar-divider"/><div className="account-chip"><span className="avatar-circle">{(user?.email?.[0] ?? user?.phone?.[0] ?? "V").toUpperCase()}</span><span className="account-email">{user?.email ?? user?.phone ?? "Vendor account"}</span></div></div>
       </header>
-      {mobileNav && <nav className="mobile-nav" aria-label="Mobile vendor navigation">{navigation.map(([href,label,icon]) => <Link key={href} onClick={() => setMobileNav(false)} href={href}><Icon name={icon}/>{label}</Link>)}</nav>}
+      {mobileNav && <nav id="vendor-mobile-navigation" className="mobile-nav" aria-label="Mobile vendor navigation">{navigation.map(([href,label,icon]) => <Link key={href} aria-current={pathname === href ? "page" : undefined} className={pathname === href || (href !== "/vendor/dashboard" && pathname.startsWith(href)) ? "mobile-nav-active" : undefined} onClick={() => setMobileNav(false)} href={href}><Icon name={icon}/>{label}</Link>)}</nav>}
       <main className="portal-content">{children}</main>
       <footer className="portal-footer"><span>VoltStop partner operations</span><span>NH-16 · Srikakulam ↔ Vijayawada</span></footer>
     </div>
