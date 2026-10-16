@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 class VoltColors {
-  static const background = Color(0xFFF5F4EE);
+  static const background = Color(0xFFF4F3EC);
   static const surface = Color(0xFFFFFEFA);
-  static const elevated = Color(0xFFEDF1E8);
-  static const border = Color(0xFFD9E0D6);
+  static const elevated = Color(0xFFEDF3E6);
+  static const border = Color(0xFFDCE3D8);
   static const forest = Color(0xFF1A4035);
   static const lime = Color(0xFFB7DC68);
   // Existing views use green as a foreground color; keep it contrast-safe.
@@ -40,9 +40,9 @@ class VoltSpacing {
 }
 
 class VoltRadii {
-  static const field = 14.0;
-  static const control = 14.0;
-  static const card = 18.0;
+  static const field = 15.0;
+  static const control = 15.0;
+  static const card = 20.0;
   static const pill = 99.0;
 }
 
@@ -172,7 +172,7 @@ ThemeData buildVoltStopTheme() {
       linearTrackColor: VoltColors.border,
     ),
     navigationBarTheme: NavigationBarThemeData(
-      height: 68,
+      height: 72,
       backgroundColor: VoltColors.surface,
       indicatorColor: VoltColors.elevated,
       labelTextStyle: WidgetStateProperty.resolveWith((states) => TextStyle(

@@ -251,6 +251,208 @@ class _DriverShellState extends State<DriverShell> {
   }
 }
 
+class _JourneyWelcomeCard extends StatelessWidget {
+  const _JourneyWelcomeCard({
+    required this.origin,
+    required this.destination,
+    this.driverName,
+  });
+
+  final String origin;
+  final String destination;
+  final String? driverName;
+
+  @override
+  Widget build(BuildContext context) {
+    final firstName = driverName?.trim().split(RegExp(r'\s+')).first;
+    final greeting = firstName == null || firstName.isEmpty
+        ? 'Make every mile easier.'
+        : 'Ready for the road, $firstName?';
+
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(VoltRadii.card + 4),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF214F40), Color(0xFF173B32)],
+        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x1F183E32),
+            blurRadius: 22,
+            offset: Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Stack(
+        children: [
+          Positioned(
+            top: -19,
+            right: -34,
+            child: IgnorePointer(
+              child: CustomPaint(
+                size: const Size(210, 190),
+                painter: _JourneyRoutePainter(),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(19, 18, 19, 17),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.bolt_rounded,
+                        color: VoltColors.lime, size: 16),
+                    const SizedBox(width: 6),
+                    const Text(
+                      'YOUR NH-16 JOURNEY',
+                      style: TextStyle(
+                        color: Color(0xFFE0ECD7),
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.1,
+                      ),
+                    ),
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 9, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: const Color(0x1FFFFFFF),
+                        borderRadius: BorderRadius.circular(VoltRadii.pill),
+                        border: Border.all(color: const Color(0x26FFFFFF)),
+                      ),
+                      child: const Text(
+                        'PILOT',
+                        style: TextStyle(
+                          color: Color(0xFFF0F5E6),
+                          fontSize: 8,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.8,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  greeting,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: VoltColors.surface,
+                    fontFamily: 'serif',
+                    fontSize: 27,
+                    fontWeight: FontWeight.w600,
+                    height: 1.02,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Plan a charge-ready drive, then find a good place to recharge, eat or rest.',
+                  style: TextStyle(
+                    color: Color(0xFFD5E1D7),
+                    fontSize: 11,
+                    height: 1.45,
+                  ),
+                ),
+                const SizedBox(height: 17),
+                Container(
+                  width: double.infinity,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0x18FFFFFF),
+                    borderRadius: BorderRadius.circular(13),
+                    border: Border.all(color: const Color(0x24FFFFFF)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.trip_origin_rounded,
+                          color: VoltColors.lime, size: 15),
+                      const SizedBox(width: 7),
+                      Expanded(
+                        child: Text(
+                          origin,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: VoltColors.surface,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 7),
+                        child: Icon(Icons.arrow_forward_rounded,
+                            color: Color(0xFFB9D6B6), size: 15),
+                      ),
+                      const Icon(Icons.location_on_rounded,
+                          color: Color(0xFF9CE0AD), size: 15),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          destination,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            color: VoltColors.surface,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _JourneyRoutePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final line = Paint()
+      ..color = const Color(0x48C8E982)
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+    final route = ui.Path()
+      ..moveTo(size.width * .08, size.height * .81)
+      ..cubicTo(size.width * .31, size.height * .53, size.width * .37,
+          size.height * .94, size.width * .56, size.height * .64)
+      ..cubicTo(size.width * .72, size.height * .39, size.width * .77,
+          size.height * .56, size.width * .98, size.height * .18);
+    canvas.drawPath(route, line);
+
+    final halo = Paint()..color = const Color(0x24D8F4A4);
+    final point = Paint()..color = const Color(0xB5D8F4A4);
+    for (final pointAt in <Offset>[
+      Offset(size.width * .08, size.height * .81),
+      Offset(size.width * .56, size.height * .64),
+      Offset(size.width * .98, size.height * .18),
+    ]) {
+      canvas.drawCircle(pointAt, 7, halo);
+      canvas.drawCircle(pointAt, 3, point);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.app, required this.onExplore});
   final AppController app;
@@ -380,26 +582,13 @@ class _HomeScreenState extends State<HomeScreen> {
                     icon: const Icon(Icons.refresh_rounded),
                   ),
                 ]),
-                const SizedBox(height: 21),
-                Text(
-                  'YOUR NEXT DRIVE',
-                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        fontSize: 10,
-                        letterSpacing: 1.1,
-                        color: VoltColors.muted,
-                      ),
+                const SizedBox(height: 14),
+                _JourneyWelcomeCard(
+                  origin: _origin,
+                  destination: _destination,
+                  driverName: _profile.name,
                 ),
-                const SizedBox(height: 7),
-                Text('Where to next?',
-                    style: Theme.of(context).textTheme.headlineMedium),
-                const SizedBox(height: 5),
-                Text(
-                  '${_profile.carModel ?? 'Your EV'}  ·  NH-16 pilot corridor',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: VoltColors.muted,
-                      ),
-                ),
-                const SizedBox(height: 19),
+                const SizedBox(height: 18),
                 VoltCard(
                   padding: const EdgeInsets.fromLTRB(17, 16, 17, 17),
                   child: Column(
