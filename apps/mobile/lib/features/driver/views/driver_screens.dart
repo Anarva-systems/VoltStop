@@ -1158,95 +1158,118 @@ class PitstopCard extends StatelessWidget {
   final Pitstop vendor;
   final VoidCallback onTap;
   @override
-  Widget build(BuildContext context) => InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: VoltCard(
-          padding: EdgeInsets.zero,
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            if (vendor.imageUrl != null && vendor.imageUrl!.startsWith('http'))
-              ClipRRect(
-                  borderRadius:
-                      const BorderRadius.vertical(top: Radius.circular(16)),
-                  child: Image.network(vendor.imageUrl!,
-                      height: 145,
-                      width: double.infinity,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _vendorImage(vendor)))
-            else
-              _vendorImage(vendor),
-            Padding(
-                padding: const EdgeInsets.all(15),
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(children: [
-                        Expanded(
-                            child: Text(vendor.name,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w900,
-                                    fontSize: 17))),
-                        Text(
-                            vendor.distanceKm > 0
-                                ? '${vendor.distanceKm.toStringAsFixed(0)} km'
-                                : 'Distance unavailable',
+  Widget build(BuildContext context) {
+    final isCharging = vendor.matchesDiscoveryCategory('EV Charging');
+    return InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: VoltCard(
+            padding: EdgeInsets.zero,
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              if (vendor.imageUrl != null &&
+                  vendor.imageUrl!.startsWith('http'))
+                ClipRRect(
+                    borderRadius:
+                        const BorderRadius.vertical(top: Radius.circular(16)),
+                    child: Image.network(vendor.imageUrl!,
+                        height: 145,
+                        width: double.infinity,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => _vendorImage(vendor)))
+              else
+                _vendorImage(vendor),
+              Padding(
+                  padding: const EdgeInsets.all(15),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(children: [
+                          Expanded(
+                              child: Text(vendor.name,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 17))),
+                          Text(
+                              vendor.distanceKm > 0
+                                  ? '${vendor.distanceKm.toStringAsFixed(0)} km'
+                                  : 'Distance unavailable',
+                              style: const TextStyle(
+                                  color: VoltColors.cyan,
+                                  fontWeight: FontWeight.w700))
+                        ]),
+                        const SizedBox(height: 4),
+                        Text(_serviceName(vendor.type),
                             style: const TextStyle(
                                 color: VoltColors.cyan,
-                                fontWeight: FontWeight.w700))
-                      ]),
-                      const SizedBox(height: 4),
-                      Text(_serviceName(vendor.type),
-                          style: const TextStyle(
-                              color: VoltColors.cyan,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700)),
-                      const SizedBox(height: 5),
-                      Text(vendor.address,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(color: VoltColors.muted)),
-                      const SizedBox(height: 12),
-                      Wrap(
-                          spacing: 7,
-                          runSpacing: 7,
-                          children: vendor.services.isEmpty
-                              ? [
-                                  const _ServiceChip(
-                                      label: 'Charging & rest stop')
-                                ]
-                              : vendor.services
-                                  .map((s) => _ServiceChip(
-                                      label: _serviceName(
-                                          '${s['service_type'] ?? 'service'}')))
-                                  .toList()),
-                      const SizedBox(height: 10),
-                      Row(children: [
-                        const Icon(Icons.schedule_rounded,
-                            size: 15, color: VoltColors.muted),
-                        const SizedBox(width: 5),
-                        Text(
-                            vendor.availableSlotCount > 0
-                                ? '${vendor.availableSlotCount} booking times open'
-                                : 'Check booking times',
-                            style: const TextStyle(
-                                color: VoltColors.muted, fontSize: 12))
-                      ]),
-                      const SizedBox(height: 13),
-                      Row(children: [
-                        Expanded(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 5),
+                        Text(vendor.address,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: VoltColors.muted)),
+                        const SizedBox(height: 9),
+                        Wrap(spacing: 7, runSpacing: 6, children: [
+                          _ServiceChip(
+                              label: vendor.isVerified == true
+                                  ? 'Verified partner'
+                                  : 'Partner listing'),
+                          if (isCharging)
+                            const _ServiceChip(
+                                label: 'Live connector status unavailable'),
+                        ]),
+                        const SizedBox(height: 12),
+                        Wrap(
+                            spacing: 7,
+                            runSpacing: 7,
+                            children: vendor.services.isEmpty
+                                ? [
+                                    const _ServiceChip(
+                                        label: 'Charging & rest stop')
+                                  ]
+                                : vendor.services
+                                    .map((s) => _ServiceChip(
+                                        label: _serviceName(
+                                            '${s['service_type'] ?? 'service'}')))
+                                    .toList()),
+                        const SizedBox(height: 10),
+                        Row(children: [
+                          const Icon(Icons.schedule_rounded,
+                              size: 15, color: VoltColors.muted),
+                          const SizedBox(width: 5),
+                          Text(
+                              vendor.availableSlotCount > 0
+                                  ? '${vendor.availableSlotCount} booking slots listed'
+                                  : 'Booking times shown in details',
+                              style: const TextStyle(
+                                  color: VoltColors.muted, fontSize: 12))
+                        ]),
+                        if (isCharging)
+                          const Padding(
+                            padding: EdgeInsets.only(top: 5),
                             child: Text(
-                                vendor.startingPrice == null
-                                    ? 'Pricing available in details'
-                                    : 'Starts at ₹${vendor.startingPrice!.toStringAsFixed(0)}',
-                                style: const TextStyle(
-                                    color: VoltColors.green,
-                                    fontWeight: FontWeight.w800))),
-                        FilledButton(
-                            onPressed: onTap, child: const Text('View stop'))
-                      ]),
-                    ])),
-          ])));
+                              'Slot listings do not confirm a charger is free right now.',
+                              style: TextStyle(
+                                  color: VoltColors.muted, fontSize: 10),
+                            ),
+                          ),
+                        const SizedBox(height: 13),
+                        Row(children: [
+                          Expanded(
+                              child: Text(
+                                  vendor.startingPrice == null
+                                      ? 'Partner pricing in details'
+                                      : 'Partner-listed from ₹${vendor.startingPrice!.toStringAsFixed(0)}',
+                                  style: const TextStyle(
+                                      color: VoltColors.green,
+                                      fontWeight: FontWeight.w800))),
+                          FilledButton(
+                              onPressed: onTap, child: const Text('View stop'))
+                        ]),
+                      ])),
+            ])));
+  }
 }
 
 Widget _vendorImage(Pitstop vendor) => Container(
@@ -1366,7 +1389,7 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
   Timer? _refreshDebounce;
   String _filter = 'All';
   String _query = '';
-  bool _map = false;
+  bool _map = true;
   bool _nearbyAlertsEnabled = false;
   bool _startingNearbyAlerts = false;
   bool _refreshingForAlerts = false;
@@ -1692,8 +1715,8 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
                             style: Theme.of(context).textTheme.titleSmall),
                         Text(
                           _nearbyAlertsEnabled
-                              ? 'While Explore is open'
-                              : 'Get an in-app alert within 5 km',
+                              ? 'Scanning within 5 km · Explore stays open'
+                              : 'In-app only · Explore must stay open',
                           style: Theme.of(context)
                               .textTheme
                               .bodySmall
@@ -1755,8 +1778,8 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
                 const Spacer(),
                 TextButton.icon(
                     onPressed: () => setState(() => _map = !_map),
-                    icon: Icon(_map ? Icons.list : Icons.map_outlined),
-                    label: Text(_map ? 'List' : 'Map'))
+                    icon: Icon(_map ? Icons.map_outlined : Icons.map),
+                    label: Text(_map ? 'Hide map' : 'Show map'))
               ]),
               if (_map)
                 SizedBox(

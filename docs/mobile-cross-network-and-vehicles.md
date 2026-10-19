@@ -2,7 +2,7 @@
 
 ## Cross-network login
 
-Supabase OTP and the VoltStop API are separate network services. The API URL is supplied at build time through `API_BASE_URL`. Emulator loopback (`10.0.2.2`) and laptop LAN IPs only work on networks that can route to the development machine; they do not work over ordinary 4G/5G mobile data. This workspace currently has no verified public HTTPS API deployment, DNS name, or TLS certificate, so cross-network sign-in cannot be completed until the FastAPI service is deployed again.
+Supabase OTP and the VoltStop API are separate network services. The API URL is supplied at build time through `API_BASE_URL`. Emulator loopback (`10.0.2.2`) and laptop LAN IPs only work on networks that can route to the development machine; they do not work over ordinary 4G/5G mobile data. During the 19 October 2026 audit, the deployed API's core health/readiness endpoints responded. The exact production host still must be copied from the active deployment settings and verified before building a phone APK; `/ready` does not prove every authenticated user route or migration is working.
 
 The app now probes `/api/v1/ready` before it requests, resends, or verifies an OTP. If the API or a required backend dependency is down, it reports that no code was requested/used, so a user is not left at the profile screen after spending a code. This is a guard against the recurring failure path, not a substitute for a reachable API deployment.
 
@@ -21,7 +21,7 @@ For 4G/5G and production, deploy FastAPI to a public HTTPS host first. Then buil
 ./build_apk.ps1 -ApiBaseUrl https://<verified-api-host>/api/v1 -BuildType release -AppEnvironment production -SupabaseUrl https://<project>.supabase.co -SupabasePublishableKey <publishable-key>
 ```
 
-The app now displays a configuration error when any build omits `API_BASE_URL`; it no longer silently uses an emulator-only default. The APK build script also checks the backend before building, so the deleted Vercel URL will fail preflight instead of being embedded into another APK.
+The app now displays a configuration error when any build omits `API_BASE_URL`; it no longer silently uses an emulator-only default. The APK build script checks the supplied backend before building, so an old or deleted Vercel URL fails preflight instead of being embedded into another APK.
 
 ## Vehicle migration and API
 

@@ -8,8 +8,8 @@ function RouteArtwork() {
   return (
     <div className="public-route-art" aria-label="Illustrated NH-16 route from Srikakulam to Vijayawada">
       <div className="route-art-topline">
-        <span className="route-art-live"><i /> NH-16 PILOT CORRIDOR</span>
-        <span className="route-art-label">ROUTE ILLUSTRATION</span>
+        <span className="route-art-badge">NH-16 PILOT CORRIDOR</span>
+        <span className="route-art-label">ILLUSTRATIVE ROUTE</span>
       </div>
       <svg className="route-art-map" viewBox="0 0 620 420" role="img" aria-label="A route line crossing the Andhra Pradesh coastline">
         <defs>
@@ -65,9 +65,9 @@ export default function HomePage() {
         <div className="public-hero-copy">
           <div className="public-eyebrow"><span /> ANDHRA PRADESH · NH-16</div>
           <h1>Go farther.<br /><em>Pause better.</em></h1>
-          <p className="public-hero-lede">A more considered way to plan your EV journey. Find route-side charging, good food and a place to rest along the Srikakulam–Vijayawada corridor.</p>
+          <p className="public-hero-lede">A more considered way to plan your EV journey. Browse partner-listed charging, good food and places to rest along the Srikakulam–Vijayawada corridor.</p>
           <div className="public-hero-actions">
-            <a className="public-button" href="#how-it-works">See how it works <span aria-hidden="true">↓</span></a>
+            <a className="public-button" href="#corridor">Explore pilot towns <span aria-hidden="true">↓</span></a>
             <Link className="public-text-link" href="/vendor/login">Become a partner <span aria-hidden="true">↗</span></Link>
           </div>
           <div className="public-trust-row"><span className="public-trust-icon">⌁</span><span><strong>Made for the open road</strong><small>Useful stops, thoughtfully brought together.</small></span></div>
@@ -75,11 +75,11 @@ export default function HomePage() {
         <RouteArtwork />
       </section>
 
-      <section className="public-corridor-strip" aria-label="Pilot corridor">
-        <div><span className="corridor-caption">THE FIRST STRETCH</span><strong>Srikakulam <i>→</i> Vijayawada</strong></div>
-        <span className="corridor-divider" />
-        <p>NH-16 · Andhra Pradesh</p>
-        <span className="corridor-route-mark" aria-hidden="true">ϟ</span>
+      <section className="public-corridor-strip" id="corridor" aria-label="NH-16 pilot corridor towns">
+        <div className="corridor-town-heading"><span className="corridor-caption">NH-16 · ANDHRA PRADESH</span><strong>Choose any stretch</strong><p>Start or finish in a listed pilot town. Route estimates are available in the VoltStop mobile app.</p></div>
+        <div className="corridor-town-list" aria-label="Pilot towns, north to south">
+          {["Srikakulam", "Vizianagaram", "Visakhapatnam", "Anakapalle", "Tuni", "Annavaram", "Rajahmundry", "Eluru", "Vijayawada"].map((town) => <span className="corridor-town" key={town}>{town}</span>)}
+        </div>
       </section>
 
       <section className="public-section public-value-section" id="how-it-works">

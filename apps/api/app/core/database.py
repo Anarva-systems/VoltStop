@@ -713,6 +713,10 @@ class Database:
                 """select v.id, v.name, v.type, v.phone, v.address, v.lat, v.lng,
                           v.description, v.image_url, v.operating_hours,
                           v.is_active, v.is_verified,
+                          coalesce((select o.status from public.vendor_onboarding o where o.vendor_id=v.id),
+                                   case when v.is_verified then 'approved' else 'pending' end) as verification_status,
+                          (select case when o.status='changes_requested' then o.decision_reason end
+                             from public.vendor_onboarding o where o.vendor_id=v.id) as decision_reason,
                           coalesce((select jsonb_agg(jsonb_build_object(
                             'id', s.id, 'service_type', s.service_type,
                             'display_name', s.display_name, 'description', s.description,
@@ -753,7 +757,10 @@ class Database:
                     values["address"], values["lat"], values["lng"], values.get("description"),
                     values.get("image_url"), values.get("operating_hours"),
                 )
-        return _record_value(row) or {}
+        profile = _record_value(row) or {}
+        profile["verification_status"] = "pending"
+        profile["decision_reason"] = None
+        return profile
 
     async def update_vendor_profile(self, owner_id: UUID, vendor_id: UUID, updates: dict[str, Any]) -> dict[str, Any] | None:
         allowed = {"name", "type", "phone", "address", "lat", "lng", "description", "image_url", "operating_hours"}
@@ -764,14 +771,23 @@ class Database:
         values = [value for _, value in selected]
         values.extend([vendor_id, owner_id])
         async with self.pool.acquire() as connection:
-            row = await connection.fetchrow(
+            updated_id = await connection.fetchval(
                 f"""update public.vendors set {assignments}, updated_at=now()
                     where id=${len(values)-1} and owner_id=${len(values)}
-                    returning id, name, type, phone, address, lat, lng, description,
-                              image_url, operating_hours, is_active, is_verified""",
+                    returning id""",
                 *values,
             )
-        return _record_value(row)
+            if updated_id is not None:
+                await connection.execute(
+                    """update public.vendor_onboarding
+                       set status='under_review', current_stage='verification', decision_reason=null,
+                           submitted_at=now(), reviewed_by=null, reviewed_at=null, updated_at=now()
+                       where vendor_id=$1 and status='changes_requested'""",
+                    vendor_id,
+                )
+        if updated_id is None:
+            return None
+        return await self.vendor_profile_for_owner(owner_id)
 
     async def vendor_dashboard(self, owner_id: UUID, vendor_id: UUID) -> dict[str, Any]:
         async with self.pool.acquire() as connection:

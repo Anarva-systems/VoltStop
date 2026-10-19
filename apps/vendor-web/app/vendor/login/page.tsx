@@ -108,7 +108,7 @@ export default function VendorLoginPage() {
     <section className="auth-side">
       <div className="auth-card">
         <p className="eyebrow">PARTNER PORTAL</p><h2>{mode === "login" ? "Welcome back" : "Create your account"}</h2>
-        <p>{mode === "login" ? "Sign in with the Supabase account linked to your business." : "Create a Supabase account to start a vendor profile."}</p>
+        <p>{mode === "login" ? "Sign in with the Supabase account linked to your business." : "Create your partner login, then submit your business profile for VoltStop review. Your listing stays out of driver discovery until an administrator approves it."}</p>
         <form className="auth-form" onSubmit={submit}>
           <label className="label-control">Business email<input required type="email" autoComplete="email" className="input-control" placeholder="you@yourbusiness.in" value={email} onChange={(event) => setEmail(event.target.value)}/></label>
           <label className="label-control">Password<span className="auth-password-field"><input required minLength={6} type={showPassword ? "text" : "password"} autoComplete={mode === "login" ? "current-password" : "new-password"} className="input-control" placeholder="At least 6 characters" value={password} onChange={(event) => setPassword(event.target.value)}/><button type="button" aria-label={showPassword ? "Hide password" : "Show password"} aria-pressed={showPassword} onClick={() => setShowPassword((visible) => !visible)}>{showPassword ? "Hide" : "Show"}</button></span></label>

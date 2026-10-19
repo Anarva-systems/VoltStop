@@ -11,6 +11,8 @@ export type VendorProfile = {
   operating_hours: string | null;
   is_active: boolean;
   is_verified: boolean;
+  verification_status?: "pending" | "under_review" | "changes_requested" | "approved" | "rejected" | "suspended";
+  decision_reason?: string | null;
   services?: VendorService[];
 };
 
