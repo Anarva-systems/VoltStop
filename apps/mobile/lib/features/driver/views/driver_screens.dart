@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:ui' as ui;
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
@@ -255,19 +256,21 @@ class _JourneyWelcomeCard extends StatelessWidget {
   const _JourneyWelcomeCard({
     required this.origin,
     required this.destination,
+    required this.stateOfCharge,
     this.driverName,
   });
 
   final String origin;
   final String destination;
+  final double? stateOfCharge;
   final String? driverName;
 
   @override
   Widget build(BuildContext context) {
     final firstName = driverName?.trim().split(RegExp(r'\s+')).first;
     final greeting = firstName == null || firstName.isEmpty
-        ? 'Make every mile easier.'
-        : 'Ready for the road, $firstName?';
+        ? 'Where to next?'
+        : 'Where to next, $firstName?';
 
     return Container(
       clipBehavior: Clip.antiAlias,
@@ -289,11 +292,11 @@ class _JourneyWelcomeCard extends StatelessWidget {
       child: Stack(
         children: [
           Positioned(
-            top: -19,
-            right: -34,
+            top: 0,
+            right: 0,
             child: IgnorePointer(
               child: CustomPaint(
-                size: const Size(210, 190),
+                size: const Size(120, 66),
                 painter: _JourneyRoutePainter(),
               ),
             ),
@@ -309,7 +312,7 @@ class _JourneyWelcomeCard extends StatelessWidget {
                         color: VoltColors.lime, size: 16),
                     const SizedBox(width: 6),
                     const Text(
-                      'YOUR NH-16 JOURNEY',
+                      'YOUR NEXT DRIVE',
                       style: TextStyle(
                         color: Color(0xFFE0ECD7),
                         fontSize: 9,
@@ -327,7 +330,7 @@ class _JourneyWelcomeCard extends StatelessWidget {
                         border: Border.all(color: const Color(0x26FFFFFF)),
                       ),
                       child: const Text(
-                        'PILOT',
+                        'NH–16',
                         style: TextStyle(
                           color: Color(0xFFF0F5E6),
                           fontSize: 8,
@@ -338,30 +341,44 @@ class _JourneyWelcomeCard extends StatelessWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 18),
-                Text(
-                  greeting,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: VoltColors.surface,
-                    fontFamily: 'serif',
-                    fontSize: 27,
-                    fontWeight: FontWeight.w600,
-                    height: 1.02,
-                    letterSpacing: -0.5,
-                  ),
+                const SizedBox(height: 13),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            greeting,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: VoltColors.surface,
+                              fontFamily: 'serif',
+                              fontSize: 25,
+                              fontWeight: FontWeight.w600,
+                              height: 1.02,
+                              letterSpacing: -0.5,
+                            ),
+                          ),
+                          const SizedBox(height: 7),
+                          const Text(
+                            'A smoother drive starts with a better stop.',
+                            style: TextStyle(
+                              color: Color(0xFFD5E1D7),
+                              fontSize: 11,
+                              height: 1.4,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    _ChargeRing(stateOfCharge: stateOfCharge),
+                  ],
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Plan a charge-ready drive, then find a good place to recharge, eat or rest.',
-                  style: TextStyle(
-                    color: Color(0xFFD5E1D7),
-                    fontSize: 11,
-                    height: 1.45,
-                  ),
-                ),
-                const SizedBox(height: 17),
+                const SizedBox(height: 13),
                 Container(
                   width: double.infinity,
                   padding:
@@ -419,6 +436,67 @@ class _JourneyWelcomeCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ChargeRing extends StatelessWidget {
+  const _ChargeRing({required this.stateOfCharge});
+
+  final double? stateOfCharge;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: 62,
+        height: 62,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            TweenAnimationBuilder<double>(
+              tween: Tween<double>(
+                begin: 0,
+                end: ((stateOfCharge ?? 0).clamp(0, 100)) / 100,
+              ),
+              duration: const Duration(milliseconds: 650),
+              curve: Curves.easeOutCubic,
+              builder: (context, value, _) => CircularProgressIndicator(
+                value: stateOfCharge == null ? 0 : value,
+                strokeWidth: 5,
+                strokeCap: StrokeCap.round,
+                backgroundColor: const Color(0x35FFFFFF),
+                valueColor:
+                    const AlwaysStoppedAnimation<Color>(VoltColors.lime),
+              ),
+            ),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              child: Column(
+                key: ValueKey(stateOfCharge?.round()),
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    stateOfCharge == null ? '—' : '${stateOfCharge!.round()}%',
+                    style: const TextStyle(
+                      color: VoltColors.surface,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      height: 1,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  const Text(
+                    'CHARGE',
+                    style: TextStyle(
+                      color: Color(0xFFD5E1D7),
+                      fontSize: 7,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: .5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
 }
 
 class _JourneyRoutePainter extends CustomPainter {
@@ -587,6 +665,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   origin: _origin,
                   destination: _destination,
                   driverName: _profile.name,
+                  stateOfCharge: _soc,
                 ),
                 const SizedBox(height: 18),
                 VoltCard(
@@ -621,7 +700,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ]),
                       const SizedBox(height: 5),
                       Text(
-                        'Choose any listed town along the pilot stretch as your start or destination.',
+                        'Pick any town along the NH–16 pilot route.',
                         style: Theme.of(context)
                             .textTheme
                             .bodySmall
@@ -1347,6 +1426,21 @@ String _serviceName(String value) => value
         word.isEmpty ? word : '${word[0].toUpperCase()}${word.substring(1)}')
     .join(' ');
 
+IconData _serviceIcon(String value) {
+  final type = value.toLowerCase().replaceAll(' ', '_');
+  if (type.contains('room') || type.contains('hotel') || type == 'stay') {
+    return Icons.hotel_rounded;
+  }
+  if (type.contains('food') || type.contains('restaurant')) {
+    return Icons.restaurant_rounded;
+  }
+  if (type.contains('rest') || type.contains('lounge')) {
+    return Icons.weekend_rounded;
+  }
+  if (type.contains('charge') || type == 'ev') return Icons.ev_station_rounded;
+  return Icons.local_offer_outlined;
+}
+
 List<Pitstop> _routePitstops(Map<String, dynamic>? data) {
   final items = data?['recommended_pitstops'];
   if (items is! List) return const [];
@@ -1537,8 +1631,7 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
         _vendors = Future.value(stations);
         _nearbyAlertStations = stations;
         _nearbyAlertsEnabled = true;
-        _nearbyAlertMessage =
-            'Alerts run while Explore is open. Charger status is from partner listings, not live plug telemetry.';
+        _nearbyAlertMessage = _nearbyAlertCoverageMessage(point, stations);
       });
       _showNearestChargingAlert(point);
       _positionSubscription = Geolocator.getPositionStream(
@@ -1547,13 +1640,8 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
           distanceFilter: 1000,
         ),
       ).listen(_onAlertPosition, onError: (_) {
-        if (mounted) {
-          setState(() {
-            _nearbyAlertsEnabled = false;
-            _nearbyAlertMessage =
-                'Location updates stopped. Nearby alerts are paused.';
-          });
-        }
+        unawaited(_pauseNearbyAlerts(
+            'Location updates stopped. Nearby alerts are paused.'));
       });
     } on _LocationFailure catch (error) {
       if (mounted) setState(() => _nearbyAlertMessage = error.message);
@@ -1601,7 +1689,13 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
         _lastAlertLookupPoint = LatLng(position.latitude, position.longitude);
         _lastAlertLookupAt = now;
         _searchCenter = _lastAlertLookupPoint;
-        if (mounted) setState(() => _vendors = Future.value(stations));
+        if (mounted) {
+          setState(() {
+            _vendors = Future.value(stations);
+            _nearbyAlertMessage =
+                _nearbyAlertCoverageMessage(_lastAlertLookupPoint!, stations);
+          });
+        }
       } catch (_) {
         // Keep the last successful nearby results while connectivity recovers.
       } finally {
@@ -1610,6 +1704,30 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
     }
 
     _showNearestChargingAlert(LatLng(position.latitude, position.longitude));
+  }
+
+  String _nearbyAlertCoverageMessage(LatLng point, List<Pitstop> stations) {
+    final chargingStops = stations
+        .where((vendor) =>
+            vendor.matchesDiscoveryCategory('EV Charging') &&
+            vendor.lat != null &&
+            vendor.lng != null)
+        .map((vendor) => MapEntry(
+            vendor,
+            Geolocator.distanceBetween(
+                point.latitude, point.longitude, vendor.lat!, vendor.lng!)))
+        .toList()
+      ..sort((a, b) => a.value.compareTo(b.value));
+
+    if (chargingStops.isEmpty) {
+      return 'Alerts are on, but no approved partner-listed charging stops were found within 50 km. Stops appear after a vendor is approved and adds a map location. Alerts are in-app while Explore stays open.';
+    }
+    final nearest = chargingStops.first;
+    final distanceKm = nearest.value / 1000;
+    if (distanceKm <= 5) {
+      return 'Alerts are on. ${nearest.key.name} is within 5 km. Charger availability is based on partner listings, not live plug data.';
+    }
+    return 'Alerts are on. ${nearest.key.name} is ${distanceKm.toStringAsFixed(1)} km away; an in-app alert appears within 5 km. Explore must stay open.';
   }
 
   void _showNearestChargingAlert(LatLng point) {
@@ -1663,16 +1781,13 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
             sliver: SliverList(
                 delegate: SliverChildListDelegate([
               const BrandMark(compact: true),
-              const SizedBox(height: 23),
-              Text('Find your next stop',
-                  style: Theme.of(context).textTheme.headlineSmall),
-              const SizedBox(height: 5),
-              Text('Reliable places to charge, eat and rest.',
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyMedium
-                      ?.copyWith(color: VoltColors.muted)),
-              const SizedBox(height: 7),
+              const SizedBox(height: 20),
+              const VoltPageHeading(
+                eyebrow: 'Explore the corridor',
+                title: 'Find your next stop',
+                subtitle: 'Places to charge, eat and rest along the way.',
+              ),
+              const SizedBox(height: 12),
               Text(
                 'Charging points are partner listings. Live connector availability is not yet linked to a charge-network provider.',
                 style: Theme.of(context)
@@ -1681,17 +1796,28 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
                     ?.copyWith(color: VoltColors.muted),
               ),
               const SizedBox(height: 17),
-              VoltCard(
-                  padding: const EdgeInsets.all(10),
-                  child: const Row(children: [
-                    Icon(Icons.route, color: VoltColors.cyan),
-                    SizedBox(width: 9),
-                    Expanded(
-                        child: Text('NH-16 pilot · Srikakulam ⇄ Vijayawada',
-                            style: TextStyle(
-                                color: VoltColors.muted, fontSize: 12))),
-                    Icon(Icons.bolt_rounded, color: VoltColors.green, size: 18)
-                  ])),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: VoltColors.forest,
+                  borderRadius: BorderRadius.circular(VoltRadii.control),
+                ),
+                child: const Row(children: [
+                  VoltIconBadge(icon: Icons.route_rounded, size: 36),
+                  SizedBox(width: 11),
+                  Expanded(
+                    child: Text(
+                        'NH–16 pilot corridor\nSrikakulam  ·  Vijayawada',
+                        style: TextStyle(
+                            color: VoltColors.surface,
+                            fontSize: 12,
+                            height: 1.45,
+                            fontWeight: FontWeight.w600)),
+                  ),
+                  Icon(Icons.bolt_rounded, color: VoltColors.lime, size: 20),
+                ]),
+              ),
               const SizedBox(height: 10),
               VoltCard(
                 padding: const EdgeInsets.fromLTRB(13, 8, 9, 8),
@@ -1715,7 +1841,7 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
                             style: Theme.of(context).textTheme.titleSmall),
                         Text(
                           _nearbyAlertsEnabled
-                              ? 'Scanning within 5 km · Explore stays open'
+                              ? 'In-app alerts · within 5 km · Explore open'
                               : 'In-app only · Explore must stay open',
                           style: Theme.of(context)
                               .textTheme
@@ -1772,15 +1898,31 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
                                       setState(() => _filter = filter))))
                           .toList())),
               const SizedBox(height: 14),
-              Row(children: [
-                Text('Places near your search area',
-                    style: Theme.of(context).textTheme.titleMedium),
-                const Spacer(),
-                TextButton.icon(
-                    onPressed: () => setState(() => _map = !_map),
-                    icon: Icon(_map ? Icons.map_outlined : Icons.map),
-                    label: Text(_map ? 'Hide map' : 'Show map'))
-              ]),
+              LayoutBuilder(builder: (context, constraints) {
+                final title = Text(
+                  'Stops in this area',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleMedium,
+                );
+                final mapToggle = TextButton.icon(
+                  onPressed: () => setState(() => _map = !_map),
+                  icon: Icon(_map ? Icons.map_outlined : Icons.map),
+                  label: Text(_map ? 'Hide map' : 'Show map'),
+                );
+                final largeText =
+                    MediaQuery.textScalerOf(context).scale(14) > 16;
+                if (constraints.maxWidth < 390 || largeText) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      title,
+                      Align(alignment: Alignment.centerRight, child: mapToggle),
+                    ],
+                  );
+                }
+                return Row(children: [Expanded(child: title), mapToggle]);
+              }),
               if (_map)
                 SizedBox(
                     height: 330,
@@ -2112,6 +2254,15 @@ class _PitstopDetailsScreenState extends State<PitstopDetailsScreen> {
                           })));
             final vendor = snapshot.data![0] as Pitstop;
             final slots = snapshot.data![1] as List<Map<String, dynamic>>;
+            final isHotel = vendor.type.toLowerCase() == 'hotel';
+            final customerSlots = isHotel
+                ? slots.where((slot) {
+                    final service = '${slot['service_type'] ?? ''}'
+                        .toLowerCase()
+                        .replaceAll(' ', '_');
+                    return service.contains('charg') || service == 'ev';
+                  }).toList()
+                : slots;
             return ListView(
                 padding: const EdgeInsets.fromLTRB(18, 4, 18, 100),
                 children: [
@@ -2178,7 +2329,7 @@ class _PitstopDetailsScreenState extends State<PitstopDetailsScreen> {
                         )),
                     const SizedBox(height: 18),
                   ],
-                  const Text('Services & charging',
+                  const Text('Services offered',
                       style:
                           TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
                   const SizedBox(height: 10),
@@ -2191,8 +2342,14 @@ class _PitstopDetailsScreenState extends State<PitstopDetailsScreen> {
                               children: vendor.services
                                   .map((s) => ListTile(
                                       contentPadding: EdgeInsets.zero,
-                                      leading: const Icon(Icons.bolt,
-                                          color: VoltColors.cyan),
+                                      leading: Icon(
+                                          _serviceIcon(
+                                              '${s['service_type'] ?? ''}'),
+                                          color: _serviceIcon(
+                                                      '${s['service_type'] ?? ''}') ==
+                                                  Icons.hotel_rounded
+                                              ? VoltColors.cyan
+                                              : VoltColors.green),
                                       title: Text(_serviceName(
                                           '${s['service_type'] ?? 'Service'}')),
                                       trailing: Text(
@@ -2212,27 +2369,22 @@ class _PitstopDetailsScreenState extends State<PitstopDetailsScreen> {
                     Text(vendor.description!,
                         style: const TextStyle(color: VoltColors.muted))
                   ],
+                  if (customerSlots.isNotEmpty) ...[
                   const SizedBox(height: 20),
                   Row(children: [
                     const Expanded(
                         child: Text('Available time slots',
                             style: TextStyle(
                                 fontWeight: FontWeight.w800, fontSize: 17))),
-                    Text('${slots.length} available',
+                    Text('${customerSlots.length} available',
                         style: const TextStyle(color: VoltColors.green))
                   ]),
                   const SizedBox(height: 10),
-                  if (slots.isEmpty)
-                    const VoltCard(
-                        child: Text(
-                            'No bookable slots are available at the moment.',
-                            style: TextStyle(color: VoltColors.muted)))
-                  else
-                    ...slots.take(3).map((slot) => Padding(
+                  ...customerSlots.take(3).map((slot) => Padding(
                         padding: const EdgeInsets.only(bottom: 9),
                         child: _SlotTile(
                             slot: slot, showSelect: false, onSelect: () {}))),
-                  if (slots.isNotEmpty) ...[
+                  if (customerSlots.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     SizedBox(
                         width: double.infinity,
@@ -2243,9 +2395,10 @@ class _PitstopDetailsScreenState extends State<PitstopDetailsScreen> {
                                     builder: (_) => SlotSelectionScreen(
                                         app: widget.app,
                                         vendor: vendor,
-                                        slots: slots))),
+                                        slots: customerSlots))),
                             icon: const Icon(Icons.schedule),
                             label: const Text('Select Slot')))
+                  ],
                   ],
                 ]);
           }));
@@ -2265,6 +2418,8 @@ class _HotelBookingScreenState extends State<HotelBookingScreen> {
   final Razorpay _razorpay = Razorpay();
   late DateTime _checkIn;
   late DateTime _checkOut;
+  TimeOfDay _checkInTime = const TimeOfDay(hour: 14, minute: 0);
+  TimeOfDay _checkOutTime = const TimeOfDay(hour: 11, minute: 0);
   late Future<List<Map<String, dynamic>>> _rooms;
   int _guests = 2;
   int _roomCount = 1;
@@ -2292,7 +2447,9 @@ class _HotelBookingScreenState extends State<HotelBookingScreen> {
           checkIn: _checkIn,
           checkOut: _checkOut,
           guests: _guests,
-          rooms: _roomCount);
+          rooms: _roomCount,
+          checkInTime: _timeValue(_checkInTime),
+          checkOutTime: _timeValue(_checkOutTime));
 
   @override
   void dispose() {
@@ -2322,6 +2479,26 @@ class _HotelBookingScreenState extends State<HotelBookingScreen> {
     });
   }
 
+  String _timeValue(TimeOfDay time) =>
+      '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+
+  Future<void> _chooseTime({required bool arrival}) async {
+    final selected = await showTimePicker(
+      context: context,
+      initialTime: arrival ? _checkInTime : _checkOutTime,
+      helpText: arrival ? 'Choose arrival time' : 'Choose departure time',
+    );
+    if (selected == null || !mounted) return;
+    setState(() {
+      if (arrival) {
+        _checkInTime = selected;
+      } else {
+        _checkOutTime = selected;
+      }
+      _rooms = _loadRooms();
+    });
+  }
+
   Future<void> _reserve(Map<String, dynamic> room) async {
     if (_busy) return;
     setState(() {
@@ -2334,7 +2511,9 @@ class _HotelBookingScreenState extends State<HotelBookingScreen> {
           checkIn: _checkIn,
           checkOut: _checkOut,
           guests: _guests,
-          rooms: _roomCount);
+          rooms: _roomCount,
+          checkInTime: _timeValue(_checkInTime),
+          checkOutTime: _timeValue(_checkOutTime));
       if (!mounted) return;
       setState(() => _busy = false);
       final nightlyRates = (quote['nightly_rates'] as List? ?? const [])
@@ -2355,6 +2534,7 @@ class _HotelBookingScreenState extends State<HotelBookingScreen> {
                           style: const TextStyle(fontWeight: FontWeight.w800)),
                       Text(
                           '${_dateLabel(_checkIn)} – ${_dateLabel(_checkOut)} · ${quote['nights']} night(s)'),
+                      Text('${_checkInTime.format(context)} arrival · ${_checkOutTime.format(context)} departure'),
                       Text('$_guests guest(s) · $_roomCount room(s)'),
                       const SizedBox(height: 10),
                       ...nightlyRates.map((line) => Padding(
@@ -2391,6 +2571,8 @@ class _HotelBookingScreenState extends State<HotelBookingScreen> {
               checkOut: _checkOut,
               guests: _guests,
               rooms: _roomCount,
+              checkInTime: _timeValue(_checkInTime),
+              checkOutTime: _timeValue(_checkOutTime),
               expectedAmountInr: '${quote['amount_inr']}',
               idempotencyKey: key);
       _reservationId = '${reservation['id']}';
@@ -2494,6 +2676,16 @@ class _HotelBookingScreenState extends State<HotelBookingScreen> {
   String _dateLabel(DateTime date) =>
       '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
 
+  String _displayTime(Object? value) {
+    final raw = '${value ?? ''}';
+    final parts = raw.split(':');
+    if (parts.length < 2) return raw;
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+    if (hour == null || minute == null) return raw;
+    return TimeOfDay(hour: hour, minute: minute).format(context);
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
       appBar: AppBar(title: Text('${widget.vendor.name} · Rooms')),
@@ -2520,6 +2712,20 @@ class _HotelBookingScreenState extends State<HotelBookingScreen> {
                             onPressed: () => _chooseDate(arrival: false),
                             icon: const Icon(Icons.logout),
                             label: Text('Check-out\n${_dateLabel(_checkOut)}')))
+                  ]),
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    Expanded(
+                        child: OutlinedButton.icon(
+                            onPressed: () => _chooseTime(arrival: true),
+                            icon: const Icon(Icons.schedule),
+                            label: Text('Arrival · ${_checkInTime.format(context)}'))),
+                    const SizedBox(width: 8),
+                    Expanded(
+                        child: OutlinedButton.icon(
+                            onPressed: () => _chooseTime(arrival: false),
+                            icon: const Icon(Icons.schedule_outlined),
+                            label: Text('Departure · ${_checkOutTime.format(context)}'))),
                   ]),
                   const SizedBox(height: 8),
                   Row(children: [
@@ -2607,6 +2813,13 @@ class _HotelBookingScreenState extends State<HotelBookingScreen> {
                                             color: VoltColors.muted)),
                                     Text(
                                         'From ₹${room['nightly_rate_inr']} / night · Free cancellation until ${room['free_cancellation_hours']}h before check-in'),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                        room['is_open_24_hours'] == true
+                                            ? 'Available 24 hours'
+                                            : 'Daily hours ${_displayTime(room['operating_start_time'])}–${_displayTime(room['operating_end_time'])}',
+                                        style: const TextStyle(
+                                            color: VoltColors.muted)),
                                     const SizedBox(height: 12),
                                     SizedBox(
                                         width: double.infinity,
@@ -2832,6 +3045,19 @@ String _hotelDate(dynamic value) {
   return '${parsed.day}/${parsed.month}/${parsed.year}';
 }
 
+String _hotelTime(dynamic value) {
+  final raw = '${value ?? ''}';
+  final parts = raw.split(':');
+  if (parts.length < 2) return 'Time not set';
+  final hour = int.tryParse(parts[0]);
+  final minute = int.tryParse(parts[1]);
+  if (hour == null || minute == null) return 'Time not set';
+  final local = TimeOfDay(hour: hour, minute: minute);
+  final period = local.period == DayPeriod.am ? 'AM' : 'PM';
+  final displayHour = local.hourOfPeriod == 0 ? 12 : local.hourOfPeriod;
+  return '${displayHour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')} $period';
+}
+
 String _time(DateTime? value) {
   if (value == null) return 'Time TBA';
   final hour = value.hour % 12 == 0 ? 12 : value.hour % 12;
@@ -2960,18 +3186,16 @@ class _ReviewRow extends StatelessWidget {
   final bool strong;
   @override
   Widget build(BuildContext context) => Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(children: [
-        Expanded(
-            child:
-                Text(label, style: const TextStyle(color: VoltColors.muted))),
-        Flexible(
-            child: Text(value,
-                textAlign: TextAlign.end,
-                style: TextStyle(
-                    fontWeight: strong ? FontWeight.w900 : FontWeight.w700,
-                    color: strong ? VoltColors.green : VoltColors.text,
-                    fontSize: strong ? 18 : 14)))
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label,
+            style: const TextStyle(color: VoltColors.muted, fontSize: 12)),
+        const SizedBox(height: 2),
+        SelectableText(value,
+            style: TextStyle(
+                fontWeight: strong ? FontWeight.w900 : FontWeight.w700,
+                color: strong ? VoltColors.green : VoltColors.text,
+                fontSize: strong ? 18 : 14))
       ]));
 }
 
@@ -3341,35 +3565,71 @@ class _DeparturePicker extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) => VoltCard(
-          child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Planned departure',
-              style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 4),
-          const Text(
-              'Set when you expect to leave. Charger reservations are booked separately.',
-              style: TextStyle(color: VoltColors.muted)),
-          Row(children: [
-            Expanded(
-                child: OutlinedButton.icon(
-              onPressed: () => _chooseDate(context),
-              icon: const Icon(Icons.calendar_today_outlined),
-              label: Text(
-                  MaterialLocalizations.of(context).formatMediumDate(value)),
-            )),
-            const SizedBox(width: 8),
-            Expanded(
-                child: OutlinedButton.icon(
-              onPressed: () => _chooseTime(context),
-              icon: const Icon(Icons.schedule),
-              label: Text(MaterialLocalizations.of(context)
-                  .formatTimeOfDay(TimeOfDay.fromDateTime(value))),
-            )),
-          ]),
-        ],
-      ));
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.fromLTRB(13, 11, 13, 12),
+        decoration: BoxDecoration(
+          color: VoltColors.elevated.withValues(alpha: .72),
+          borderRadius: BorderRadius.circular(VoltRadii.control),
+          border: Border.all(color: VoltColors.border.withValues(alpha: .8)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              const VoltIconBadge(
+                  icon: Icons.event_available_outlined, size: 34),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Planned departure',
+                        style: Theme.of(context).textTheme.titleSmall),
+                    Text('Set your expected start time',
+                        style: Theme.of(context).textTheme.bodySmall),
+                  ],
+                ),
+              ),
+            ]),
+            const SizedBox(height: 10),
+            Row(children: [
+              Expanded(
+                  child: _departureButton(
+                context,
+                icon: Icons.calendar_today_outlined,
+                onPressed: () => _chooseDate(context),
+                label:
+                    MaterialLocalizations.of(context).formatMediumDate(value),
+              )),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: _departureButton(
+                context,
+                icon: Icons.schedule_rounded,
+                onPressed: () => _chooseTime(context),
+                label: MaterialLocalizations.of(context)
+                    .formatTimeOfDay(TimeOfDay.fromDateTime(value)),
+              )),
+            ]),
+          ],
+        ),
+      );
+
+  Widget _departureButton(BuildContext context,
+          {required IconData icon,
+          required VoidCallback onPressed,
+          required String label}) =>
+      OutlinedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 16),
+        label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(0, 44),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          backgroundColor: VoltColors.surface,
+          textStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+        ),
+      );
 }
 
 class RoutePlannerScreen extends StatefulWidget {
@@ -3896,7 +4156,7 @@ class _BookingsScreenState extends State<BookingsScreen>
                               style:
                                   const TextStyle(fontWeight: FontWeight.w800)),
                           subtitle: Text(
-                              '${_hotelDate(item['check_in'])} – ${_hotelDate(item['check_out'])} · ${item['guests']} guests\n₹${item['amount_inr']} · $status · payment ${item['payment_status'] ?? 'pending'}',
+                              '${_hotelDate(item['check_in'])} ${_hotelTime(item['check_in_time'])} – ${_hotelDate(item['check_out'])} ${_hotelTime(item['check_out_time'])} · ${item['guests']} guests\n₹${item['amount_inr']} · $status · payment ${item['payment_status'] ?? 'pending'}',
                               maxLines: 3),
                           trailing: canCancel
                               ? IconButton(
@@ -3925,10 +4185,27 @@ class _BookingsScreenState extends State<BookingsScreen>
                       style: Theme.of(context).textTheme.titleLarge),
                   const SizedBox(height: 8),
                   Text(
-                      '${_hotelDate(item['check_in'])} – ${_hotelDate(item['check_out'])}'),
+                      '${_hotelDate(item['check_in'])} ${_hotelTime(item['check_in_time'])} arrival\n${_hotelDate(item['check_out'])} ${_hotelTime(item['check_out_time'])} departure'),
                   Text('${item['rooms']} room(s) · ${item['guests']} guest(s)'),
                   Text('₹${item['amount_inr']} · ${item['status']}'),
                   Text('Payment: ${item['payment_status'] ?? 'pending'}'),
+                  if (item['vendor_lat'] is num && item['vendor_lng'] is num)
+                    SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                            onPressed: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (_) => DestinationMapScreen(
+                                        latitude: (item['vendor_lat'] as num)
+                                            .toDouble(),
+                                        longitude: (item['vendor_lng'] as num)
+                                            .toDouble(),
+                                        title: '${item['vendor_name'] ?? 'Hotel'}',
+                                        address: item['vendor_address']?.toString(),
+                                        serviceType: 'hotel'))),
+                            icon: const Icon(Icons.directions),
+                            label: const Text('Directions to hotel'))),
                   if (item['status'] == 'refund_pending')
                     const Text(
                         'Cancellation is recorded. Refund awaits finance review.',
@@ -4112,18 +4389,25 @@ class _BookingDetailsScreenState extends State<BookingDetailsScreen> {
       body: ListView(padding: const EdgeInsets.all(18), children: [
         VoltCard(
             child: Column(children: [
-          const Icon(Icons.ev_station, color: VoltColors.green, size: 40),
+          Icon(
+              _serviceIcon(_booking.serviceType ?? _booking.vendorType ?? ''),
+              color: VoltColors.green,
+              size: 40),
           const SizedBox(height: 10),
           Text(_booking.status.toUpperCase(),
               style: const TextStyle(
                   color: VoltColors.green, fontWeight: FontWeight.w900)),
           const SizedBox(height: 14),
-          _ReviewRow(label: 'Booking ID', value: _booking.id),
           _ReviewRow(
-              label: 'Vendor', value: _booking.vendorName ?? _booking.vendorId),
+              label: 'Booking reference',
+              value: '#${_booking.id.length > 8 ? _booking.id.substring(0, 8).toUpperCase() : _booking.id.toUpperCase()}'),
+          _ReviewRow(label: 'Pitstop', value: _booking.vendorName ?? 'VoltStop partner'),
           if (_booking.vendorAddress != null)
             _ReviewRow(label: 'Address', value: _booking.vendorAddress!),
-          _ReviewRow(label: 'Slot reference', value: _booking.slotId),
+          if (_booking.serviceType != null)
+            _ReviewRow(
+                label: 'Booked service',
+                value: _serviceName(_booking.serviceType!)),
           _ReviewRow(
               label: 'Date',
               value: _booking.slotStartTime == null
@@ -4181,15 +4465,229 @@ class _BookingDetailsScreenState extends State<BookingDetailsScreen> {
       ]));
 
   Future<void> _directions(BuildContext context) async {
-    final destination =
-        _booking.vendorAddress ?? _booking.vendorName ?? _booking.vendorId;
-    final uri =
-        Uri.https('www.openstreetmap.org', '/search', {'query': destination});
-    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) &&
-        context.mounted)
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open directions.')));
+    if (_booking.vendorLat == null || _booking.vendorLng == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('This pitstop has no map location yet.')));
+      return;
+    }
+    await Navigator.push(
+        context,
+        MaterialPageRoute(
+            builder: (_) => DestinationMapScreen(
+                latitude: _booking.vendorLat!,
+                longitude: _booking.vendorLng!,
+                title: _booking.vendorName ?? 'VoltStop pitstop',
+                address: _booking.vendorAddress,
+                serviceType:
+                    _booking.serviceType ?? _booking.vendorType ?? '')));
   }
+}
+
+class DestinationMapScreen extends StatefulWidget {
+  const DestinationMapScreen({
+    super.key,
+    required this.latitude,
+    required this.longitude,
+    required this.title,
+    required this.serviceType,
+    this.address,
+  });
+  final double latitude;
+  final double longitude;
+  final String title;
+  final String? address;
+  final String serviceType;
+
+  @override
+  State<DestinationMapScreen> createState() => _DestinationMapScreenState();
+}
+
+class _DestinationMapScreenState extends State<DestinationMapScreen> {
+  final MapController _mapController = MapController();
+  List<LatLng> _route = const [];
+  LatLng? _origin;
+  bool _loading = true;
+  bool _mapReady = false;
+  String? _message;
+
+  LatLng get _destination =>
+      LatLng(widget.latitude, widget.longitude);
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadRoute());
+  }
+
+  Future<void> _loadRoute() async {
+    if (!mounted) return;
+    setState(() {
+      _loading = true;
+      _message = null;
+      _route = const [];
+    });
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        throw const _LocationFailure('Turn on location to show a route.');
+      }
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        throw const _LocationFailure(
+            'Allow location access to show directions from your current position.');
+      }
+      final position = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+              accuracy: LocationAccuracy.medium,
+              timeLimit: Duration(seconds: 12)));
+      final origin = LatLng(position.latitude, position.longitude);
+      final url = Uri.parse(
+          '${AppConfig.osrmRouterUrl}/${origin.longitude},${origin.latitude};${_destination.longitude},${_destination.latitude}');
+      final response = await Dio().getUri(url.replace(queryParameters: {
+        'overview': 'full',
+        'geometries': 'geojson',
+        'steps': 'false',
+      }), options: Options(receiveTimeout: const Duration(seconds: 15)));
+      final data = response.data;
+      final routes = data is Map ? data['routes'] : null;
+      final geometry = routes is List && routes.isNotEmpty
+          ? (routes.first is Map ? routes.first['geometry'] : null)
+          : null;
+      final coordinates = geometry is Map ? geometry['coordinates'] : null;
+      final points = coordinates is List
+          ? coordinates
+              .whereType<List>()
+              .where((point) => point.length >= 2)
+              .map((point) => LatLng(
+                  (point[1] as num).toDouble(), (point[0] as num).toDouble()))
+              .toList()
+          : <LatLng>[];
+      if (points.length < 2) {
+        throw const FormatException('A route was not returned.');
+      }
+      if (!mounted) return;
+      setState(() {
+        _origin = origin;
+        _route = points;
+        _loading = false;
+        _message = 'Route preview · follow road signs and local traffic rules.';
+      });
+      _fitRoute();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _message = error is _LocationFailure
+            ? error.message
+            : 'Could not load a driving route. The pitstop location is still shown on the map.';
+      });
+      if (_mapReady) _mapController.move(_destination, 13);
+    }
+  }
+
+  void _fitRoute() {
+    if (!_mapReady || _route.length < 2) return;
+    _mapController.fitCamera(CameraFit.bounds(
+        bounds: LatLngBounds.fromPoints(_route),
+        padding: const EdgeInsets.fromLTRB(32, 32, 32, 210)));
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+      appBar: AppBar(title: const Text('Directions to pitstop')),
+      body: Stack(children: [
+        FlutterMap(
+          mapController: _mapController,
+          options: MapOptions(
+              initialCenter: _destination,
+              initialZoom: 13,
+              onMapReady: () {
+                _mapReady = true;
+                _fitRoute();
+              }),
+          children: [
+            TileLayer(
+                urlTemplate: AppConfig.osmTileUrl,
+                userAgentPackageName: 'com.voltstop.app'),
+            if (_route.length > 1)
+              PolylineLayer(polylines: [
+                Polyline(
+                    points: _route,
+                    color: VoltColors.green,
+                    strokeWidth: 5,
+                    borderColor: Colors.white,
+                    borderStrokeWidth: 2)
+              ]),
+            MarkerLayer(markers: [
+              Marker(
+                  point: _destination,
+                  width: 52,
+                  height: 52,
+                  child: Icon(_serviceIcon(widget.serviceType),
+                      color: VoltColors.forest, size: 38)),
+              if (_origin != null)
+                Marker(
+                    point: _origin!,
+                    width: 42,
+                    height: 42,
+                    child: const Icon(Icons.my_location,
+                        color: VoltColors.cyan, size: 28)),
+            ]),
+            RichAttributionWidget(attributions: [
+              TextSourceAttribution('OpenStreetMap contributors',
+                  onTap: () => launchUrl(
+                      Uri.parse('https://openstreetmap.org/copyright'))),
+            ]),
+          ],
+        ),
+        Positioned(
+            left: 14,
+            right: 14,
+            bottom: 16,
+            child: VoltCard(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(widget.title,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w900, fontSize: 17)),
+                      if (widget.address?.isNotEmpty ?? false)
+                        Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(widget.address!,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    color: VoltColors.muted))),
+                      if (_message != null)
+                        Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text(_message!,
+                                style: const TextStyle(
+                                    color: VoltColors.muted, fontSize: 12))),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                              onPressed: _loading ? null : _loadRoute,
+                              icon: _loading
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2))
+                                  : const Icon(Icons.route_rounded),
+                              label: Text(_loading
+                                  ? 'Loading route…'
+                                  : _route.isEmpty
+                                      ? 'Try loading route'
+                                      : 'Refresh route')))
+                    ])))
+      ]));
 }
 
 class ProfileScreen extends StatelessWidget {
@@ -4198,68 +4696,189 @@ class ProfileScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final profile = app.profile;
-    return ListView(padding: const EdgeInsets.all(18), children: [
-      const BrandMark(compact: true),
-      const SizedBox(height: 18),
-      VoltCard(
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(profile?.name ?? 'Driver profile',
-            style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: 5),
-        Text(profile?.phone ?? 'Phone verified with Supabase',
-            style: const TextStyle(color: VoltColors.muted)),
-        const Divider(height: 25),
-        _ReviewRow(label: 'Vehicle', value: profile?.carModel ?? 'Not set'),
-        _ReviewRow(
-            label: 'Battery capacity',
-            value: '${profile?.batteryKwh ?? '—'} kWh'),
-        _ReviewRow(
-            label: 'Default efficiency',
-            value: '${profile?.efficiencyKmPerKwh ?? '—'} km/kWh')
-      ])),
-      const SizedBox(height: 16),
-      ListTile(
-          leading:
-              const Icon(Icons.directions_car_outlined, color: VoltColors.cyan),
-          title: Text('My vehicles (${app.vehicles.length})'),
-          subtitle:
-              Text(app.activeVehicle?.displayName ?? 'Manage saved vehicles'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => Navigator.push(context,
-              MaterialPageRoute(builder: (_) => VehiclesScreen(app: app)))),
-      ListTile(
-          leading: const Icon(Icons.settings_outlined, color: VoltColors.cyan),
-          title: const Text('Edit vehicle profile'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => Navigator.push(context,
-              MaterialPageRoute(builder: (_) => ProfileSetupScreen(app: app)))),
-      ListTile(
-          leading: const Icon(Icons.history, color: VoltColors.cyan),
-          title: const Text('Trip history'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                  builder: (_) => Scaffold(
-                      appBar: AppBar(title: const Text('Trip history')),
-                      body: BookingsScreen(app: app))))),
-      const SizedBox(height: 12),
-      OutlinedButton.icon(
-          onPressed: () async {
-            await app.logout();
-            if (context.mounted)
-              Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (_) => OnboardingScreen(app: app)),
-                  (_) => false);
-          },
-          icon: const Icon(Icons.logout),
-          label: const Text('Sign out')),
-      const SizedBox(height: 12),
-      const Text(
-          'VoltStop NH-16 pilot • Battery and route values are estimates.',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: VoltColors.muted, fontSize: 11)),
-    ]);
+    final displayName = profile?.name?.trim() ?? '';
+    return ListView(
+        padding: const EdgeInsets.fromLTRB(18, 16, 18, 30),
+        children: [
+          const BrandMark(compact: true),
+          const SizedBox(height: 22),
+          const VoltPageHeading(
+            eyebrow: 'Your account',
+            title: 'Driver profile',
+            subtitle: 'Your details and saved vehicle information.',
+          ),
+          const SizedBox(height: 18),
+          Container(
+            padding: const EdgeInsets.all(19),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(VoltRadii.card + 3),
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF214F40), Color(0xFF173B32)],
+              ),
+              boxShadow: const [
+                BoxShadow(
+                    color: Color(0x17183E32),
+                    blurRadius: 18,
+                    offset: Offset(0, 8))
+              ],
+            ),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                CircleAvatar(
+                  radius: 25,
+                  backgroundColor: const Color(0x24FFFFFF),
+                  child: Text(
+                    (displayName.isNotEmpty ? displayName[0] : 'V')
+                        .toUpperCase(),
+                    style: const TextStyle(
+                        color: VoltColors.lime,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(profile?.name ?? 'Driver profile',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleLarge
+                                ?.copyWith(color: VoltColors.surface)),
+                        const SizedBox(height: 3),
+                        Text(profile?.phone ?? 'Phone verified with Supabase',
+                            style: const TextStyle(
+                                color: Color(0xFFD5E1D7), fontSize: 12)),
+                      ]),
+                ),
+                const Icon(Icons.verified_user_outlined,
+                    color: VoltColors.lime, size: 20),
+              ]),
+              const SizedBox(height: 17),
+              Container(height: 1, color: const Color(0x2FFFFFFF)),
+              const SizedBox(height: 13),
+              Row(children: [
+                Expanded(
+                    child: _profileMetric(
+                        'VEHICLE', profile?.carModel ?? 'Not set')),
+                const SizedBox(width: 12),
+                Expanded(
+                    child: _profileMetric(
+                        'BATTERY', '${profile?.batteryKwh ?? '—'} kWh')),
+                const SizedBox(width: 12),
+                Expanded(
+                    child: _profileMetric('EFFICIENCY',
+                        '${profile?.efficiencyKmPerKwh ?? '—'} km/kWh')),
+              ]),
+            ]),
+          ),
+          const SizedBox(height: 20),
+          Text('YOUR GARAGE',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  fontSize: 10, letterSpacing: 1.1, color: VoltColors.muted)),
+          const SizedBox(height: 9),
+          VoltCard(
+              padding: EdgeInsets.zero,
+              child: Column(children: [
+                _ProfileActionTile(
+                  icon: Icons.directions_car_outlined,
+                  title: 'My vehicles',
+                  subtitle: app.activeVehicle?.displayName ??
+                      '${app.vehicles.length} saved vehicles',
+                  onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => VehiclesScreen(app: app))),
+                ),
+                const Divider(height: 1, indent: 68),
+                _ProfileActionTile(
+                  icon: Icons.tune_rounded,
+                  title: 'Vehicle profile',
+                  subtitle: 'Update efficiency and battery details',
+                  onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => ProfileSetupScreen(app: app))),
+                ),
+                const Divider(height: 1, indent: 68),
+                _ProfileActionTile(
+                  icon: Icons.history_rounded,
+                  title: 'Booking history',
+                  subtitle: 'Your upcoming and past reservations',
+                  onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => Scaffold(
+                              appBar:
+                                  AppBar(title: const Text('Booking history')),
+                              body: BookingsScreen(app: app)))),
+                ),
+              ])),
+          const SizedBox(height: 19),
+          OutlinedButton.icon(
+            onPressed: () async {
+              await app.logout();
+              if (context.mounted)
+                Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute(
+                        builder: (_) => OnboardingScreen(app: app)),
+                    (_) => false);
+            },
+            icon: const Icon(Icons.logout_rounded),
+            label: const Text('Sign out'),
+          ),
+          const SizedBox(height: 14),
+          const Text(
+              'VoltStop NH–16 pilot  ·  Route and battery figures are estimates.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: VoltColors.muted, fontSize: 11)),
+        ]);
   }
+
+  Widget _profileMetric(String label, String value) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label,
+              style: const TextStyle(
+                  color: Color(0xFFBFD0C6),
+                  fontSize: 8,
+                  letterSpacing: .8,
+                  fontWeight: FontWeight.w800)),
+          const SizedBox(height: 4),
+          Text(value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  color: VoltColors.surface,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700)),
+        ],
+      );
+}
+
+class _ProfileActionTile extends StatelessWidget {
+  const _ProfileActionTile(
+      {required this.icon,
+      required this.title,
+      required this.subtitle,
+      required this.onTap});
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 13, vertical: 4),
+        leading: VoltIconBadge(icon: icon, size: 40),
+        title: Text(title, style: Theme.of(context).textTheme.titleSmall),
+        subtitle: Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+        trailing:
+            const Icon(Icons.chevron_right_rounded, color: VoltColors.muted),
+        onTap: onTap,
+      );
 }

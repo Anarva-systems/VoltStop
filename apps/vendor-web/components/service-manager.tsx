@@ -7,7 +7,7 @@ import type { VendorService } from "@/types/vendor";
 
 const serviceTypes = [
   ["food", "Food"], ["charging", "AC Slow Charging"], ["sleep_and_charge", "Sleep & Charge"],
-  ["room", "Room"], ["parking", "Parking"], ["rest_area", "Rest Area"], ["combo", "Combo Package"],
+  ["room", "Room"], ["parking", "Parking"], ["rest_area", "Rest Area"],
 ];
 const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -18,12 +18,19 @@ export function ServiceManager({ pricingOnly = false }: { pricingOnly?: boolean 
   const services = useVendorQuery<VendorService[]>("/services", token);
   const [dialog, setDialog] = useState<"new" | VendorService | null>(null);
   const [busy, setBusy] = useState("");
+  const [formError, setFormError] = useState("");
   const [prices, setPrices] = useState<Record<string, string>>({});
 
   async function saveService(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!token || !dialog) return;
     const form = new FormData(event.currentTarget);
+    const serviceType = String(form.get("service_type"));
+    if (dialog === "new" && services.data?.some((service) => service.service_type === serviceType)) {
+      const existing = services.data.find((service) => service.service_type === serviceType);
+      setFormError(`You already list ${existing?.display_name || label(serviceType)}. Edit that service to change its details or price.`);
+      return;
+    }
     const previousAvailability = dialog === "new" ? {} : dialog.availability ?? {};
     const days = form.getAll("availability_days").map(String);
     const open = String(form.get("availability_open") ?? "");
@@ -40,7 +47,7 @@ export function ServiceManager({ pricingOnly = false }: { pricingOnly?: boolean 
     if (open) availability.open = open;
     if (close) availability.close = close;
     const value = {
-      service_type: String(form.get("service_type")),
+      service_type: serviceType,
       display_name: String(form.get("display_name")).trim(),
       description: String(form.get("description")).trim() || null,
       price_inr: Number(form.get("price_inr")),
@@ -55,7 +62,7 @@ export function ServiceManager({ pricingOnly = false }: { pricingOnly?: boolean 
       setDialog(null);
       services.reload();
       toast(dialog === "new" ? "Service added" : "Service updated");
-    } catch (reason) { toast(reason instanceof Error ? reason.message : "Could not save service"); }
+    } catch (reason) { setFormError(reason instanceof Error ? reason.message : "Could not save service"); }
     finally { setBusy(""); }
   }
 
@@ -80,7 +87,7 @@ export function ServiceManager({ pricingOnly = false }: { pricingOnly?: boolean 
 
   const pageTitle = pricingOnly ? "Pricing" : "Services";
   return <>
-    <PageHeader eyebrow={pricingOnly ? "SERVICE RATES" : "OFFERINGS"} title={pricingOnly ? "Pricing" : "Services & packages"} description={pricingOnly ? "Set your INR prices. Driver-facing prices update from this service catalogue." : "Manage the services drivers can discover and reserve at your location."} action={!pricingOnly && <Button onClick={() => setDialog("new")}><Icon name="bolt"/>Add service</Button>}/>
+    <PageHeader eyebrow={pricingOnly ? "SERVICE RATES" : "OFFERINGS"} title={pricingOnly ? "Pricing" : "Services & packages"} description={pricingOnly ? "Set your INR prices. Driver-facing prices update from this service catalogue." : "Manage the services drivers can discover and reserve at your location."} action={!pricingOnly && <Button onClick={() => { setFormError(""); setDialog("new"); }}><Icon name="bolt"/>Add service</Button>}/>
     {services.loading ? <div className="service-grid">{Array.from({ length: 4 }, (_, index) => <Panel key={index} className="panel-pad"><Skeleton rows={4}/></Panel>)}</div> : services.error ? <Panel><ErrorState message={services.error} onRetry={services.reload}/></Panel> : !services.data?.length ? <Panel><EmptyState title="No services set up" description="Add the food, charging and stay options drivers can book at your business." action={<Button onClick={() => setDialog("new")}><Icon name="bolt"/>Add your first service</Button>}/></Panel> : pricingOnly ? <div className="service-grid">{services.data.map((service) => <Panel className="service-card" key={service.id}>
       <div className="service-card-head"><div><h3>{service.display_name || label(service.service_type)}</h3><span className="table-secondary">{label(service.service_type)}</span></div><StatePill value={service.is_active ? "available" : "closed"}/></div>
       <p>{service.description || "No service description added."}</p>
@@ -92,8 +99,8 @@ export function ServiceManager({ pricingOnly = false }: { pricingOnly?: boolean 
       <div className="service-actions"><StatePill value={service.is_active ? "available" : "closed"}/><div className="table-actions"><button className="action-link" onClick={() => setDialog(service)}>Edit</button><Button variant="secondary" disabled={busy === service.id} onClick={() => toggle(service)}>{busy === service.id ? "Saving…" : service.is_active ? "Pause" : "Enable"}</Button></div></div>
     </Panel>)}</div>}
     {pricingOnly && <p className="label-note" style={{ marginTop: 17 }}>This service pricing report shows listed prices; commission and settlement estimates use verified payment records.</p>}
-    {dialog && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setDialog(null)}><div className="modal-card"><div className="modal-head"><div><h2>{dialog === "new" ? "Add a service" : "Edit service"}</h2><p>This service catalogue is used by driver discovery and vendor booking slots.</p></div><button className="close-button" onClick={() => setDialog(null)}><Icon name="close"/></button></div>
-      <form onSubmit={saveService}><div className="form-grid">
+    {dialog && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setDialog(null)}><div className="modal-card"><div className="modal-head"><div><h2>{dialog === "new" ? "Add a service" : "Edit service"}</h2><p>Choose what drivers can find and reserve at your business.</p></div><button className="close-button" onClick={() => setDialog(null)}><Icon name="close"/></button></div>
+      <form onChange={() => setFormError("")} onSubmit={saveService}>{formError && <p className="form-error" role="alert">{formError}</p>}<div className="form-grid">
         <label className="label-control form-span-2">Service name<input required name="display_name" className="input-control" placeholder="e.g. AC charging, breakfast, standard room" defaultValue={dialog === "new" ? "" : dialog.display_name ?? ""}/></label>
         <label className="label-control">Service type<select name="service_type" className="select-control" defaultValue={dialog === "new" ? "charging" : dialog.service_type}>{serviceTypes.map(([value,name]) => <option value={value} key={value}>{name}</option>)}</select></label>
         <label className="label-control">Price per booking · INR<input required min="0" step="0.01" name="price_inr" type="number" className="input-control" placeholder="0.00" defaultValue={dialog === "new" ? "" : dialog.price_inr}/></label>

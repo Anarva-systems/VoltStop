@@ -1279,7 +1279,8 @@ class Database:
                     """select b.id, b.user_id, b.vendor_id, b.slot_id, b.payment_id,
                               b.amount_paid, b.status, b.created_at, b.updated_at,
                               p.razorpay_order_id, p.amount_inr, p.currency, p.status as payment_status,
-                              v.name as vendor_name, v.address as vendor_address,
+                              v.name as vendor_name, v.address as vendor_address, v.type as vendor_type,
+                              v.lat as vendor_lat, v.lng as vendor_lng, cs.service_type,
                               cs.slot_start_time, cs.slot_end_time
                        from public.bookings b
                        join public.payments p on p.id=b.payment_id
@@ -1296,7 +1297,8 @@ class Database:
                 """select b.id, b.user_id, b.vendor_id, b.slot_id, b.payment_id,
                           b.amount_paid, b.status, b.created_at, b.updated_at,
                           p.razorpay_order_id, p.amount_inr, p.currency, p.status as payment_status,
-                          v.name as vendor_name, v.address as vendor_address,
+                          v.name as vendor_name, v.address as vendor_address, v.type as vendor_type,
+                          v.lat as vendor_lat, v.lng as vendor_lng, cs.service_type,
                           cs.slot_start_time, cs.slot_end_time
                    from public.bookings b
                    left join public.payments p on p.id=b.payment_id
@@ -1315,7 +1317,8 @@ class Database:
                 """select b.id, b.user_id, b.vendor_id, b.slot_id, b.payment_id,
                           b.amount_paid, b.status, b.created_at, b.updated_at,
                           p.razorpay_order_id, p.amount_inr, p.currency, p.status as payment_status,
-                          v.name as vendor_name, v.address as vendor_address,
+                          v.name as vendor_name, v.address as vendor_address, v.type as vendor_type,
+                          v.lat as vendor_lat, v.lng as vendor_lng, cs.service_type,
                           cs.slot_start_time, cs.slot_end_time
                    from public.bookings b
                    left join public.payments p on p.id=b.payment_id

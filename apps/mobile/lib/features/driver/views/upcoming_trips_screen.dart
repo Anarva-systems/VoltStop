@@ -81,13 +81,22 @@ class _DriverTripsScreenState extends State<DriverTripsScreen> {
         length: 3,
         child: Scaffold(
           appBar: AppBar(
-            title: const Text('Trips'),
+            title: Row(mainAxisSize: MainAxisSize.min, children: [
+              const VoltIconBadge(icon: Icons.route_rounded, size: 34),
+              const SizedBox(width: 10),
+              Text('Your trips', style: Theme.of(context).textTheme.titleLarge),
+            ]),
             actions: [
               IconButton(
                 tooltip: 'Create upcoming trip',
                 onPressed: _createTrip,
-                icon: const Icon(Icons.add_road),
+                style: IconButton.styleFrom(
+                  backgroundColor: VoltColors.elevated,
+                  foregroundColor: VoltColors.forest,
+                ),
+                icon: const Icon(Icons.add_road_rounded),
               ),
+              const SizedBox(width: 8),
             ],
             bottom: const TabBar(
               isScrollable: true,

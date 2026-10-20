@@ -4,7 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-ServiceType = Literal["food", "charging", "sleep_and_charge", "room", "parking", "rest_area", "combo"]
+ServiceType = Literal["food", "charging", "sleep_and_charge", "room", "parking", "rest_area"]
 
 
 class VendorProfilePatch(BaseModel):

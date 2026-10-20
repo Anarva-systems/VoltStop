@@ -11,6 +11,10 @@ class Booking {
     this.amountPaise,
     this.vendorName,
     this.vendorAddress,
+    this.vendorType,
+    this.serviceType,
+    this.vendorLat,
+    this.vendorLng,
     this.slotStartTime,
     this.slotEndTime,
   });
@@ -26,6 +30,10 @@ class Booking {
   final int? amountPaise;
   final String? vendorName;
   final String? vendorAddress;
+  final String? vendorType;
+  final String? serviceType;
+  final double? vendorLat;
+  final double? vendorLng;
   final DateTime? slotStartTime;
   final DateTime? slotEndTime;
 
@@ -45,6 +53,10 @@ class Booking {
         amountPaise: int.tryParse('${json['payment']?['amount_paise']}'),
         vendorName: json['vendor_name']?.toString(),
         vendorAddress: json['vendor_address']?.toString(),
+        vendorType: json['vendor_type']?.toString(),
+        serviceType: json['service_type']?.toString(),
+        vendorLat: double.tryParse('${json['vendor_lat'] ?? ''}'),
+        vendorLng: double.tryParse('${json['vendor_lng'] ?? ''}'),
         slotStartTime:
             DateTime.tryParse('${json['slot_start_time'] ?? ''}')?.toLocal(),
         slotEndTime:

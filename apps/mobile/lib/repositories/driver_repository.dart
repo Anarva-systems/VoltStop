@@ -349,6 +349,8 @@ class DriverRepository {
     required DateTime checkOut,
     required int guests,
     int rooms = 1,
+    String checkInTime = '14:00',
+    String checkOutTime = '11:00',
   }) async {
     final result = await _api.get(
       '/hotels/rooms',
@@ -358,6 +360,8 @@ class DriverRepository {
         'check_out': checkOut.toIso8601String().split('T').first,
         'guests': guests,
         'rooms': rooms,
+        'check_in_time': checkInTime,
+        'check_out_time': checkOutTime,
       },
     );
     if (result is! List)
@@ -374,6 +378,8 @@ class DriverRepository {
     required DateTime checkOut,
     required int guests,
     int rooms = 1,
+    String checkInTime = '14:00',
+    String checkOutTime = '11:00',
     required String expectedAmountInr,
     required String idempotencyKey,
   }) async =>
@@ -384,6 +390,8 @@ class DriverRepository {
             'room_type_id': roomTypeId,
             'check_in': checkIn.toIso8601String().split('T').first,
             'check_out': checkOut.toIso8601String().split('T').first,
+            'check_in_time': checkInTime,
+            'check_out_time': checkOutTime,
             'guests': guests,
             'rooms': rooms,
             'expected_amount_inr': expectedAmountInr,
@@ -398,6 +406,8 @@ class DriverRepository {
     required DateTime checkOut,
     required int guests,
     int rooms = 1,
+    String checkInTime = '14:00',
+    String checkOutTime = '11:00',
   }) async =>
       Map<String, dynamic>.from(
         await _api.post(
@@ -406,6 +416,8 @@ class DriverRepository {
             'room_type_id': roomTypeId,
             'check_in': checkIn.toIso8601String().split('T').first,
             'check_out': checkOut.toIso8601String().split('T').first,
+            'check_in_time': checkInTime,
+            'check_out_time': checkOutTime,
             'guests': guests,
             'rooms': rooms,
           },

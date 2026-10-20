@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, time
 from typing import Any
 from uuid import UUID
 
@@ -26,8 +26,9 @@ def _repo(database: DatabaseDependency) -> HotelRepository:
 async def rooms(user: CurrentUser, database: DatabaseDependency,
                 check_in: date | None = None, check_out: date | None = None,
                 guests: int = Query(default=1, ge=1, le=12), rooms: int = Query(default=1, ge=1, le=4),
-                vendor_id: UUID | None = None) -> dict[str, Any]:
-    return success(await _repo(database).rooms(check_in, check_out, guests, rooms, vendor_id))
+                vendor_id: UUID | None = None,
+                check_in_time: time = time(14, 0), check_out_time: time = time(11, 0)) -> dict[str, Any]:
+    return success(await _repo(database).rooms(check_in, check_out, guests, rooms, vendor_id, check_in_time, check_out_time))
 
 
 @router.get("/rooms/{room_type_id}/availability")

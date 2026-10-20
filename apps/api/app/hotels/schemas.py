@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -12,8 +12,17 @@ class RoomTypeCreate(BaseModel):
     max_guests: int = Field(ge=1, le=12)
     base_rate_inr: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
     total_rooms: int = Field(ge=1, le=10000)
+    is_open_24_hours: bool = True
+    operating_start_time: time = time(0, 0)
+    operating_end_time: time = time(23, 59)
     free_cancellation_hours: int = Field(default=24, ge=0, le=720)
     is_active: bool = True
+
+    @model_validator(mode="after")
+    def validate_operating_hours(self):
+        if not self.is_open_24_hours and self.operating_start_time == self.operating_end_time:
+            raise ValueError("Opening and closing times must differ unless the room is open 24 hours")
+        return self
 
 
 class RoomTypePatch(BaseModel):
@@ -23,12 +32,15 @@ class RoomTypePatch(BaseModel):
     max_guests: int | None = Field(default=None, ge=1, le=12)
     base_rate_inr: Decimal | None = Field(default=None, gt=0, max_digits=10, decimal_places=2)
     total_rooms: int | None = Field(default=None, ge=1, le=10000)
+    is_open_24_hours: bool | None = None
+    operating_start_time: time | None = None
+    operating_end_time: time | None = None
     free_cancellation_hours: int | None = Field(default=None, ge=0, le=720)
     is_active: bool | None = None
 
     @model_validator(mode="after")
     def reject_null_required_fields(self):
-        for field in ("name", "max_guests", "base_rate_inr", "total_rooms", "free_cancellation_hours", "is_active"):
+        for field in ("name", "max_guests", "base_rate_inr", "total_rooms", "free_cancellation_hours", "is_active", "is_open_24_hours", "operating_start_time", "operating_end_time"):
             if field in self.model_fields_set and getattr(self, field) is None:
                 raise ValueError(f"{field} cannot be null")
         return self
@@ -49,6 +61,8 @@ class QuoteRequest(BaseModel):
     check_out: date
     guests: int = Field(ge=1, le=12)
     rooms: int = Field(default=1, ge=1, le=4)
+    check_in_time: time = time(14, 0)
+    check_out_time: time = time(11, 0)
 
     @model_validator(mode="after")
     def valid_dates(self):

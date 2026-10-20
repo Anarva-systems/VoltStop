@@ -88,11 +88,12 @@ ThemeData buildVoltStopTheme() {
     scaffoldBackgroundColor: VoltColors.background,
     dividerColor: VoltColors.border,
     appBarTheme: const AppBarTheme(
-      backgroundColor: VoltColors.background,
+      backgroundColor: VoltColors.surface,
       foregroundColor: VoltColors.text,
       centerTitle: false,
       elevation: 0,
       scrolledUnderElevation: 0,
+      surfaceTintColor: Colors.transparent,
       systemOverlayStyle: voltSystemUiOverlayStyle,
       titleTextStyle: strongTitle,
     ),
@@ -175,6 +176,8 @@ ThemeData buildVoltStopTheme() {
       height: 72,
       backgroundColor: VoltColors.surface,
       indicatorColor: VoltColors.elevated,
+      elevation: 0,
+      labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
       labelTextStyle: WidgetStateProperty.resolveWith((states) => TextStyle(
             color: VoltColors.forest,
             fontWeight: states.contains(WidgetState.selected)
@@ -199,6 +202,7 @@ ThemeData buildVoltStopTheme() {
       unselectedLabelColor: VoltColors.muted,
       indicatorColor: VoltColors.forest,
       dividerColor: VoltColors.border,
+      indicatorSize: TabBarIndicatorSize.label,
       labelStyle: TextStyle(fontWeight: FontWeight.w700),
     ),
     snackBarTheme: SnackBarThemeData(

@@ -32,6 +32,10 @@ function RouteArtwork() {
         <circle cx="436" cy="116" r="5" fill="#fff" fillOpacity=".88" />
         <circle cx="149" cy="258" r="5" fill="#fff" fillOpacity=".88" />
       </svg>
+      <div className="route-charge-stop" aria-label="Partner-listed charging stop">
+        <span aria-hidden="true">ϟ</span>
+        <small>PARTNER STOP</small>
+      </div>
       <div className="route-city route-city-start"><span>STARTING POINT</span><strong>Srikakulam</strong></div>
       <div className="route-city route-city-end"><span>DESTINATION</span><strong>Vijayawada</strong></div>
       <div className="route-art-note"><span className="route-note-icon">ϟ</span><span><strong>Plan around the journey</strong><small>Charging · food · places to stay</small></span></div>

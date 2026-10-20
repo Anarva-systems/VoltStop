@@ -310,31 +310,27 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(24, 20, 24, 28),
                 children: [
-                  Text(
-                    'DRIVER ACCESS',
-                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                          fontSize: 10,
-                          letterSpacing: 1.15,
-                          color: VoltColors.muted,
-                        ),
+                  const VoltPageHeading(
+                    eyebrow: 'Driver access',
+                    title: 'Welcome back.',
+                    subtitle:
+                        'Sign in with your mobile number to plan your next drive.',
                   ),
-                  const SizedBox(height: 13),
-                  Text(
-                    'Sign in, then hit the road.',
-                    style: Theme.of(context)
-                        .textTheme
-                        .headlineMedium
-                        ?.copyWith(fontSize: 32),
+                  const SizedBox(height: 24),
+                  VoltCard(
+                    padding: const EdgeInsets.all(16),
+                    color: VoltColors.elevated,
+                    child: const Row(children: [
+                      VoltIconBadge(icon: Icons.lock_outline_rounded, size: 40),
+                      SizedBox(width: 12),
+                      Expanded(
+                          child: Text('Secure one-time code sign-in',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: VoltColors.forest))),
+                    ]),
                   ),
-                  const SizedBox(height: 10),
-                  Text(
-                    'Enter the mobile number on your VoltStop account to request a one-time code. Delivery depends on the authentication service and SMS provider.',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodyLarge
-                        ?.copyWith(color: VoltColors.muted),
-                  ),
-                  const SizedBox(height: 26),
+                  const SizedBox(height: 20),
                   TextField(
                     controller: _phone,
                     keyboardType: TextInputType.phone,
@@ -348,7 +344,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
                   ),
                   const SizedBox(height: 7),
                   Text(
-                    'India  ·  10-digit number',
+                    'India  ·  10-digit mobile number',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   if (!AppConfig.hasSupabase) ...[
@@ -419,7 +415,7 @@ class _OtpScreenState extends State<OtpScreen> {
   bool _authenticated = false;
   int _resendSeconds = _resendCooldownSeconds;
   Timer? _resendTimer;
-  String _requestStatus = 'Supabase accepted the OTP request';
+  String _requestStatus = 'Code request accepted';
   String? _error;
 
   @override
@@ -461,7 +457,7 @@ class _OtpScreenState extends State<OtpScreen> {
       await widget.app.checkApiReadiness();
       await widget.app.auth.sendOtp(widget.phone);
       if (mounted) {
-        setState(() => _requestStatus = 'Supabase accepted a new code request');
+        setState(() => _requestStatus = 'New code request accepted');
       }
     } catch (error) {
       if (mounted) setState(() => _error = _authError(error, sending: true));
@@ -546,28 +542,30 @@ class _OtpScreenState extends State<OtpScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(24, 20, 24, 28),
                 children: [
-                  Text(
-                    'SECURE SIGN-IN',
-                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                          fontSize: 10,
-                          letterSpacing: 1.15,
-                          color: VoltColors.muted,
-                        ),
+                  const VoltPageHeading(
+                    eyebrow: 'Secure sign-in',
+                    title: 'Check your messages.',
+                    subtitle: 'Enter the six-digit code sent to your phone.',
                   ),
-                  const SizedBox(height: 13),
-                  Text(
-                    'Request accepted',
-                    style: Theme.of(context).textTheme.headlineMedium,
+                  const SizedBox(height: 18),
+                  VoltCard(
+                    padding: const EdgeInsets.all(14),
+                    color: VoltColors.elevated,
+                    child: Row(children: [
+                      const VoltIconBadge(icon: Icons.sms_outlined, size: 38),
+                      const SizedBox(width: 11),
+                      Expanded(
+                          child: Text('$_requestStatus for ${widget.phone}',
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: VoltColors.forest))),
+                    ]),
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 9),
                   Text(
-                    '$_requestStatus for ${widget.phone}. This confirms request processing only; SMS delivery to your device is not confirmed. Verify the number and wait before retrying; rate limits may apply.',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodyLarge
-                        ?.copyWith(color: VoltColors.muted),
-                  ),
-                  const SizedBox(height: 26),
+                      'SMS delivery can take a moment. Wait before requesting another code.',
+                      style: Theme.of(context).textTheme.bodySmall),
+                  const SizedBox(height: 18),
                   TextField(
                     controller: _code,
                     keyboardType: TextInputType.number,

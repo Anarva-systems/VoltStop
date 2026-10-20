@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -24,6 +24,22 @@ def _row(row: Any) -> dict[str, Any] | None:
 
 def _fingerprint(values: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(values, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
+
+
+def _validate_times(room: Any, check_in_time: time, check_out_time: time) -> None:
+    if room.get("is_open_24_hours", True):
+        return
+    start = room.get("operating_start_time", time(0, 0))
+    end = room.get("operating_end_time", time(23, 59))
+
+    def is_open(value: time) -> bool:
+        if start <= end:
+            return start <= value <= end
+        return value >= start or value <= end
+
+    if not is_open(check_in_time) or not is_open(check_out_time):
+        hours = f"{start.strftime('%H:%M')}–{end.strftime('%H:%M')}"
+        raise ApiError(422, "OUTSIDE_OPERATING_HOURS", f"Choose arrival and departure times during the hotel's daily hours ({hours})")
 
 
 class HotelRepository:
@@ -53,7 +69,8 @@ class HotelRepository:
             )
 
     async def rooms(self, check_in: date | None, check_out: date | None, guests: int, rooms: int,
-                    vendor_id: UUID | None = None) -> list[dict[str, Any]]:
+                    vendor_id: UUID | None = None, check_in_time: time = time(14, 0),
+                    check_out_time: time = time(11, 0)) -> list[dict[str, Any]]:
         if (check_in is None) != (check_out is None):
             raise ApiError(422, "INVALID_STAY", "Provide both check_in and check_out")
         if check_in and (check_in < _local_today() or check_out <= check_in or (check_out - check_in).days > 30):
@@ -64,6 +81,7 @@ class HotelRepository:
                 rows = await conn.fetch(
                     """select r.id as room_type_id,r.vendor_id,r.name as room_name,r.description,
                               r.max_guests,r.base_rate_inr,r.total_rooms,r.free_cancellation_hours,
+                              r.is_open_24_hours,r.operating_start_time,r.operating_end_time,
                               v.name as vendor_name,v.address,v.lat,v.lng,
                               coalesce((select min(i.nightly_rate_inr) from public.hotel_room_inventory i
                                 where i.room_type_id=r.id and i.stay_date >= current_date),r.base_rate_inr) as nightly_rate_inr,
@@ -75,29 +93,37 @@ class HotelRepository:
                        from public.hotel_room_types r join public.vendors v on v.id=r.vendor_id
                        where r.is_active and v.type='hotel' and v.is_active and v.is_verified and r.max_guests * $4 >= $3
                          and ($5::uuid is null or r.vendor_id=$5)
+                         and (r.is_open_24_hours or case when r.operating_start_time <= r.operating_end_time
+                              then $6::time between r.operating_start_time and r.operating_end_time
+                               and $7::time between r.operating_start_time and r.operating_end_time
+                              else ($6::time >= r.operating_start_time or $6::time <= r.operating_end_time)
+                               and ($7::time >= r.operating_start_time or $7::time <= r.operating_end_time) end)
                          and ($1::date is null or (
                            (select count(*) from generate_series($1::date::timestamp,($2::date-1)::timestamp,interval '1 day') as nights(stay_date)
                             join public.hotel_room_inventory i on i.room_type_id=r.id and i.stay_date=nights.stay_date::date
                             where i.rooms_available >= $4) = ($2::date-$1::date)))
                        order by v.name,r.name limit 200""",
-                    check_in, check_out, guests, rooms, vendor_id,
+                    check_in, check_out, guests, rooms, vendor_id, check_in_time, check_out_time,
                 )
         return [_row(item) or {} for item in rows]
 
-    async def quote(self, room_type_id: UUID, check_in: date, check_out: date, guests: int, rooms: int) -> dict[str, Any]:
+    async def quote(self, room_type_id: UUID, check_in: date, check_out: date, guests: int, rooms: int,
+                    check_in_time: time = time(14, 0), check_out_time: time = time(11, 0)) -> dict[str, Any]:
         if check_in < _local_today() or check_out <= check_in or (check_out - check_in).days > 30:
             raise ApiError(422, "INVALID_STAY", "Stay must start today or later and be between 1 and 30 nights")
         async with self.pool.acquire() as conn:
             async with conn.transaction():
                 await self._expire_pending(conn)
                 room = await conn.fetchrow(
-                    """select r.id,r.vendor_id,r.name,r.max_guests,r.free_cancellation_hours,v.name as vendor_name
+                    """select r.id,r.vendor_id,r.name,r.max_guests,r.free_cancellation_hours,
+                              r.is_open_24_hours,r.operating_start_time,r.operating_end_time,v.name as vendor_name
                        from public.hotel_room_types r join public.vendors v on v.id=r.vendor_id
                        where r.id=$1 and r.is_active and v.is_active and v.is_verified and v.type='hotel'""",
                     room_type_id,
                 )
                 if room is None:
                     raise ApiError(404, "ROOM_TYPE_NOT_FOUND", "Available room type was not found")
+                _validate_times(room, check_in_time, check_out_time)
                 if guests > room["max_guests"] * rooms:
                     raise ApiError(422, "GUEST_LIMIT_EXCEEDED", "Guest count exceeds the selected room capacity")
                 inventory = await conn.fetch(
@@ -114,9 +140,14 @@ class HotelRepository:
                         "nights": nights, "guests": guests, "rooms": rooms, "nightly_rates": [
                             {"stay_date": item["stay_date"], "rate_inr": item["nightly_rate_inr"]} for item in inventory],
                         "amount_inr": amount.quantize(Decimal("0.01")), "currency": "INR",
-                        "free_cancellation_hours": room["free_cancellation_hours"]}
+                        "free_cancellation_hours": room["free_cancellation_hours"],
+                        "is_open_24_hours": room["is_open_24_hours"],
+                        "operating_start_time": room["operating_start_time"],
+                        "operating_end_time": room["operating_end_time"],
+                        "check_in_time": check_in_time, "check_out_time": check_out_time}
 
     async def create_reservation(self, customer_id: UUID, values: dict[str, Any], idempotency_key: str) -> tuple[dict[str, Any], bool]:
+        values = {"check_in_time": time(14, 0), "check_out_time": time(11, 0), **values}
         fingerprint = _fingerprint({**values, "room_type_id": str(values["room_type_id"])})
         async with self.pool.acquire() as conn:
             async with conn.transaction():
@@ -137,12 +168,15 @@ class HotelRepository:
                     return _row(replay) or {}, False
 
                 room = await conn.fetchrow(
-                    """select r.vendor_id,r.max_guests,r.free_cancellation_hours,r.is_active,v.is_active as vendor_active,v.is_verified,v.type
+                    """select r.vendor_id,r.max_guests,r.free_cancellation_hours,r.is_active,
+                              r.is_open_24_hours,r.operating_start_time,r.operating_end_time,
+                              v.is_active as vendor_active,v.is_verified,v.type
                        from public.hotel_room_types r join public.vendors v on v.id=r.vendor_id
                        where r.id=$1 for update of r,v""", values["room_type_id"],
                 )
                 if room is None or room["type"] != "hotel" or not room["is_active"] or not room["vendor_active"] or not room["is_verified"]:
                     raise ApiError(404, "ROOM_TYPE_NOT_FOUND", "Available room type was not found")
+                _validate_times(room, values["check_in_time"], values["check_out_time"])
                 if values["guests"] > room["max_guests"] * values["rooms"]:
                     raise ApiError(422, "GUEST_LIMIT_EXCEEDED", "Guest count exceeds the selected room capacity")
                 inventory = await conn.fetch(
@@ -159,11 +193,12 @@ class HotelRepository:
                     raise ApiError(409, "PRICE_CHANGED", "The server price changed; review a new quote before reserving")
                 reservation = await conn.fetchrow(
                     """insert into public.hotel_reservations
-                         (customer_id,vendor_id,room_type_id,check_in,check_out,guests,rooms,amount_inr,free_cancellation_hours,status,idempotency_key,request_fingerprint,hold_expires_at)
-                       values($1,$2,$3,$4,$5,$6,$7,$8,$9,'payment_pending',$10,$11,now()+($12::text||' minutes')::interval)
-                       returning id,customer_id,vendor_id,room_type_id,check_in,check_out,guests,rooms,amount_inr,free_cancellation_hours,currency,status,hold_expires_at,created_at""",
+                         (customer_id,vendor_id,room_type_id,check_in,check_out,check_in_time,check_out_time,guests,rooms,amount_inr,free_cancellation_hours,status,idempotency_key,request_fingerprint,hold_expires_at)
+                       values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'payment_pending',$12,$13,now()+($14::text||' minutes')::interval)
+                       returning id,customer_id,vendor_id,room_type_id,check_in,check_out,check_in_time,check_out_time,guests,rooms,amount_inr,free_cancellation_hours,currency,status,hold_expires_at,created_at""",
                     customer_id, room["vendor_id"], values["room_type_id"], values["check_in"], values["check_out"],
-                    values["guests"], values["rooms"], amount, room["free_cancellation_hours"], idempotency_key, fingerprint, HOLD_MINUTES,
+                    values["check_in_time"], values["check_out_time"], values["guests"], values["rooms"], amount,
+                    room["free_cancellation_hours"], idempotency_key, fingerprint, HOLD_MINUTES,
                 )
                 payment_id = await conn.fetchval(
                     "insert into public.hotel_reservation_payments(reservation_id,amount_inr) values($1,$2) returning id",
@@ -207,9 +242,10 @@ class HotelRepository:
             async with conn.transaction():
                 await self._expire_pending(conn)
                 row = await conn.fetchrow(
-                    """select r.id,r.customer_id,r.vendor_id,r.room_type_id,r.check_in,r.check_out,r.guests,r.rooms,
+            """select r.id,r.customer_id,r.vendor_id,r.room_type_id,r.check_in,r.check_out,r.check_in_time,r.check_out_time,r.guests,r.rooms,
                           r.amount_inr,r.currency,r.status,r.free_cancellation_hours,r.hold_expires_at,r.created_at,r.updated_at,
-                          v.name as vendor_name,v.address as vendor_address,rt.name as room_name,rt.description as room_description,
+                          v.name as vendor_name,v.address as vendor_address,v.lat as vendor_lat,v.lng as vendor_lng,
+                          rt.name as room_name,rt.description as room_description,
                           rt.max_guests,p.razorpay_order_id,p.razorpay_payment_id,p.amount_inr as payment_amount,
                           p.status as payment_status,p.webhook_verified,p.order_state,
                           (select f.status from public.hotel_refunds f where f.reservation_id=r.id order by f.created_at desc limit 1) as refund_status
@@ -232,8 +268,9 @@ class HotelRepository:
             async with conn.transaction():
                 await self._expire_pending(conn)
                 rows = await conn.fetch(
-                    """select r.id,r.vendor_id,r.room_type_id,r.check_in,r.check_out,r.guests,r.rooms,r.amount_inr,r.currency,r.status,
-                          r.hold_expires_at,r.created_at,v.name as vendor_name,rt.name as room_name,p.status as payment_status,
+                    """select r.id,r.vendor_id,r.room_type_id,r.check_in,r.check_out,r.check_in_time,r.check_out_time,r.guests,r.rooms,r.amount_inr,r.currency,r.status,
+                          r.hold_expires_at,r.created_at,v.name as vendor_name,v.address as vendor_address,
+                          v.lat as vendor_lat,v.lng as vendor_lng,rt.name as room_name,p.status as payment_status,
                           (select f.status from public.hotel_refunds f where f.reservation_id=r.id order by f.created_at desc limit 1) as refund_status
                    from public.hotel_reservations r join public.vendors v on v.id=r.vendor_id
                    join public.hotel_room_types rt on rt.id=r.room_type_id
@@ -292,23 +329,38 @@ class HotelRepository:
     async def create_room_type(self, owner_id: UUID, vendor_id: UUID, values: dict[str, Any]) -> dict[str, Any]:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
-                """insert into public.hotel_room_types(vendor_id,name,description,max_guests,base_rate_inr,total_rooms,free_cancellation_hours,is_active)
-                   select $1,$3,$4,$5,$6,$7,$8,$9 where exists(select 1 from public.vendors where id=$1 and owner_id=$2 and type='hotel')
+                """insert into public.hotel_room_types(vendor_id,name,description,max_guests,base_rate_inr,total_rooms,free_cancellation_hours,is_active,is_open_24_hours,operating_start_time,operating_end_time)
+                   select $1,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12 where exists(select 1 from public.vendors where id=$1 and owner_id=$2 and type='hotel')
                    returning *""", vendor_id, owner_id, values["name"].strip(), values.get("description"), values["max_guests"],
-                values["base_rate_inr"], values["total_rooms"], values["free_cancellation_hours"], values["is_active"])
+                values["base_rate_inr"], values["total_rooms"], values["free_cancellation_hours"], values["is_active"],
+                values["is_open_24_hours"], values["operating_start_time"], values["operating_end_time"])
         if row is None:
             raise ApiError(404, "HOTEL_VENDOR_NOT_FOUND", "Hotel vendor profile was not found")
         return _row(row) or {}
 
     async def update_room_type(self, owner_id: UUID, vendor_id: UUID, room_type_id: UUID, updates: dict[str, Any]) -> dict[str, Any] | None:
         selected = [(key, value) for key, value in updates.items() if key in {
-            "name", "description", "max_guests", "base_rate_inr", "total_rooms", "free_cancellation_hours", "is_active"}]
+            "name", "description", "max_guests", "base_rate_inr", "total_rooms", "free_cancellation_hours", "is_active",
+            "is_open_24_hours", "operating_start_time", "operating_end_time"}]
         if not selected:
             raise ApiError(422, "EMPTY_PATCH", "Provide at least one room field to update")
         columns = ",".join(f"{key}=${index}" for index, (key, _) in enumerate(selected, 1))
         args = [value for _, value in selected] + [room_type_id, vendor_id, owner_id]
         async with self.pool.acquire() as conn:
             async with conn.transaction():
+                if any(key in updates for key in ("is_open_24_hours", "operating_start_time", "operating_end_time")):
+                    current_hours = await conn.fetchrow(
+                        """select r.is_open_24_hours,r.operating_start_time,r.operating_end_time
+                           from public.hotel_room_types r join public.vendors v on v.id=r.vendor_id
+                           where r.id=$1 and r.vendor_id=$2 and v.owner_id=$3 for update of r""",
+                        room_type_id, vendor_id, owner_id)
+                    if current_hours is None:
+                        return None
+                    is_open = updates.get("is_open_24_hours", current_hours["is_open_24_hours"])
+                    start = updates.get("operating_start_time", current_hours["operating_start_time"])
+                    end = updates.get("operating_end_time", current_hours["operating_end_time"])
+                    if not is_open and start == end:
+                        raise ApiError(422, "INVALID_OPERATING_HOURS", "Opening and closing times must differ unless the room is open 24 hours")
                 if "total_rooms" in updates:
                     occupied = await conn.fetchval(
                         """select exists(select 1 from public.hotel_room_inventory where room_type_id=$1
@@ -358,7 +410,7 @@ class HotelRepository:
     async def vendor_reservations(self, owner_id: UUID, vendor_id: UUID) -> list[dict[str, Any]]:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
-                """select r.id,r.customer_id,r.room_type_id,r.check_in,r.check_out,r.guests,r.rooms,r.amount_inr,r.currency,r.status,r.created_at,
+                """select r.id,r.customer_id,r.room_type_id,r.check_in,r.check_out,r.check_in_time,r.check_out_time,r.guests,r.rooms,r.amount_inr,r.currency,r.status,r.created_at,
                           rt.name as room_name,p.status as payment_status,p.webhook_verified,pr.name as customer_name,pr.phone as customer_phone
                    from public.hotel_reservations r join public.vendors v on v.id=r.vendor_id
                    join public.hotel_room_types rt on rt.id=r.room_type_id join public.profiles pr on pr.id=r.customer_id

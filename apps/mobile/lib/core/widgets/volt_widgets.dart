@@ -20,9 +20,86 @@ class VoltCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: color ?? VoltColors.surface,
           borderRadius: BorderRadius.circular(VoltRadii.card),
-          border: Border.all(color: VoltColors.border),
+          border: Border.all(color: VoltColors.border.withValues(alpha: .78)),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x0C173B32),
+              blurRadius: 18,
+              offset: Offset(0, 7),
+            ),
+          ],
         ),
         child: child,
+      );
+}
+
+class VoltPageHeading extends StatelessWidget {
+  const VoltPageHeading({
+    super.key,
+    required this.eyebrow,
+    required this.title,
+    this.subtitle,
+    this.trailing,
+  });
+
+  final String eyebrow;
+  final String title;
+  final String? subtitle;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) => Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(eyebrow.toUpperCase(),
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        fontSize: 10,
+                        letterSpacing: 1.2,
+                        color: VoltColors.muted)),
+                const SizedBox(height: 7),
+                Text(title,
+                    style: Theme.of(context)
+                        .textTheme
+                        .headlineSmall
+                        ?.copyWith(fontSize: 29)),
+                if (subtitle != null) ...[
+                  const SizedBox(height: 5),
+                  Text(subtitle!,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodyMedium
+                          ?.copyWith(color: VoltColors.muted)),
+                ],
+              ],
+            ),
+          ),
+          if (trailing != null) ...[
+            const SizedBox(width: VoltSpacing.sm),
+            trailing!,
+          ],
+        ],
+      );
+}
+
+class VoltIconBadge extends StatelessWidget {
+  const VoltIconBadge({super.key, required this.icon, this.size = 44});
+  final IconData icon;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: size,
+        height: size,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: VoltColors.elevated,
+          borderRadius: BorderRadius.circular(size * .34),
+        ),
+        child: Icon(icon, color: VoltColors.forest, size: size * .48),
       );
 }
 
