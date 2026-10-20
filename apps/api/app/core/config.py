@@ -99,6 +99,21 @@ class Settings(BaseSettings):
             if origin.strip():
                 self._canonical_origin(origin)
 
+        if self.database_url.strip():
+            database = urlsplit(self.database_url)
+            if database.scheme not in {"postgres", "postgresql"} or not database.hostname:
+                raise ValueError("DATABASE_URL must identify a PostgreSQL host")
+            database_host = database.hostname.lower()
+            local_database = database_host in {"localhost", "127.0.0.1", "::1"}
+            supabase_database = database_host.endswith(".supabase.co") or database_host.endswith(
+                ".pooler.supabase.com"
+            )
+            if not local_database and not supabase_database:
+                raise ValueError(
+                    "DATABASE_URL must point to Supabase PostgreSQL; "
+                    "only local Supabase is allowed for development"
+                )
+
         if environment == "development":
             mode = self.razorpay_mode.strip().lower()
             if mode == "live" or self.razorpay_key_id.startswith("rzp_live_"):
@@ -140,6 +155,8 @@ class Settings(BaseSettings):
             raise ValueError("SUPABASE_URL cannot target localhost in staging/production")
         if database.scheme not in {"postgres", "postgresql"} or not database.hostname:
             raise ValueError("DATABASE_URL must identify a PostgreSQL host")
+        if database.hostname.lower() in local_hosts:
+            raise ValueError("DATABASE_URL cannot be localhost in staging/production")
         database_host = database.hostname.lower()
         if not (database_host.endswith(".supabase.co") or database_host.endswith(".pooler.supabase.com")):
             raise ValueError("DATABASE_URL must point to this deployment's Supabase PostgreSQL database or pooler")

@@ -28,6 +28,15 @@ def test_development_keeps_local_defaults():
     assert settings.razorpay_mode == ""
 
 
+def test_development_rejects_legacy_external_postgres():
+    with pytest.raises(ValidationError, match="must point to Supabase PostgreSQL"):
+        Settings(
+            _env_file=None,
+            environment="development",
+            database_url="postgresql://user:secret@old-db.example:5432/voltstop",
+        )
+
+
 def test_unset_environment_fails_closed_as_production(monkeypatch):
     monkeypatch.delenv("ENVIRONMENT", raising=False)
 
