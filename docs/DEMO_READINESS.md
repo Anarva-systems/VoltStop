@@ -5,7 +5,7 @@ This checklist describes the current persisted flows and the configuration neede
 ## Start the local applications
 
 1. Start PostgreSQL/Supabase and Redis using the configured services. Docker is not part of this procedure.
-2. Apply the Supabase migrations in order. In particular, the hotel reservations migration and `202610110003_restaurant_orders.sql` must be applied before hotel reservations or restaurant menus are used. The Neon mirror for the restaurant schema is `apps/api/migrations/neon/003_restaurant_orders.sql`.
+2. Apply the Supabase migrations in order. In particular, the hotel reservations migration and `202610110003_restaurant_orders.sql` must be applied before hotel reservations or restaurant menus are used.
 3. Start FastAPI from the repository root so it reads the root `.env`; set `PYTHONPATH` to `D:\voltstop\apps\api` and listen on port `8001`:
    ```powershell
    $env:PYTHONPATH = 'D:\voltstop\apps\api'

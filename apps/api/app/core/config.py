@@ -140,6 +140,9 @@ class Settings(BaseSettings):
             raise ValueError("SUPABASE_URL cannot target localhost in staging/production")
         if database.scheme not in {"postgres", "postgresql"} or not database.hostname:
             raise ValueError("DATABASE_URL must identify a PostgreSQL host")
+        database_host = database.hostname.lower()
+        if not (database_host.endswith(".supabase.co") or database_host.endswith(".pooler.supabase.com")):
+            raise ValueError("DATABASE_URL must point to this deployment's Supabase PostgreSQL database or pooler")
         if not database.username or not database.password:
             raise ValueError("DATABASE_URL must use an explicit database identity")
         if redis.scheme not in {"redis", "rediss"} or not redis.hostname:

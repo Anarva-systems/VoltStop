@@ -125,13 +125,8 @@ class AdminRepository:
         where_sql = " and ".join(where)
         args = (search, status, vendor_type, location)
         async with self.pool.acquire() as conn:
-            auth_users_ready = await conn.fetchval("select to_regclass('auth.users') is not null")
-            owner_email = "auth_owner.email" if auth_users_ready else "owner_profile.email"
-            owner_join = (
-                "left join auth.users auth_owner on auth_owner.id=v.owner_id"
-                if auth_users_ready else
-                "left join public.profiles owner_profile on owner_profile.id=v.owner_id"
-            )
+            owner_email = "auth_owner.email"
+            owner_join = "left join auth.users auth_owner on auth_owner.id=v.owner_id"
             where[0] = f"($1::text is null or v.name ilike '%'||$1||'%' or v.address ilike '%'||$1||'%' or coalesce({owner_email},'') ilike '%'||$1||'%')"
             where_sql = " and ".join(where)
             total = await conn.fetchval(
@@ -813,12 +808,9 @@ class AdminRepository:
     async def admin_users(self, limit: int, offset: int) -> dict[str, Any]:
         async with self.pool.acquire() as conn:
             total = await conn.fetchval("select count(*) from public.admin_users")
-            auth_users_ready = await conn.fetchval("select to_regclass('auth.users') is not null")
-            user_email = "auth_user.email" if auth_users_ready else "p.email"
-            auth_join = "left join auth.users auth_user on auth_user.id=u.user_id" if auth_users_ready else ""
             rows = await conn.fetch(
-                f"""select u.user_id,u.role_name,u.is_active,u.created_at,u.updated_at,{user_email} as email
-                   from public.admin_users u left join public.profiles p on p.id=u.user_id {auth_join}
+                """select u.user_id,u.role_name,u.is_active,u.created_at,u.updated_at,auth_user.email as email
+                   from public.admin_users u left join auth.users auth_user on auth_user.id=u.user_id
                    order by u.created_at desc limit $1 offset $2""", limit, offset,
             )
         return {"items": [row_dict(r) for r in rows], "total": total, "limit": limit, "offset": offset}

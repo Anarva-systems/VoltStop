@@ -10,7 +10,7 @@
 | Trip discovery | Not available | Opt-in, authenticated, browse-only discovery by corridor stops and departure date | No seat requests/reservations, direct contact, passenger matching, fare, or payment |
 | Route/charging suggestions | Existing route estimate and vendor pitstop listing | Optional estimate may be attached to a trip; provider outages do not block scheduling | No traffic-aware optimization, live CPO availability, charger pricing guarantees, or charger reservation |
 | Vendor portal | Vendor/admin operations only | No driver trip controls added to vendor website | Keep role-specific controls separated |
-| Data schema | No `driver_trips` table | Additive Supabase and Neon migrations with constraints, indexes, idempotency, and Supabase owner-read RLS | Migrations have not been applied to any shared/production database |
+| Data schema | No `driver_trips` table | Additive Supabase migration with constraints, indexes, idempotency, and owner-read RLS | Migrations have not been applied to any shared/production database |
 | Automated verification | No trip tests | Backend: 145 passed, 3 skipped; Flutter: 45 passed; Dart analysis clean; debug APK built | Migration contract tests are static; no real database or deployed API verification |
 | Mobile API connectivity | No live backend deployment | Debug APK built with Flutter's default Android-emulator API address | Physical phones need a reachable LAN/HTTPS API; no listener was found on local ports 8000 or 8001 |
 

@@ -16,7 +16,7 @@ VoltStop has a functioning multi-surface foundation: Flutter driver app, partner
 - API changes now expose ownership-scoped cancellation-quote endpoints and recalculate the quote inside the cancellation transaction. Captured verified payments create an idempotent partial refund request for finance review; the API does not promise an immediate/automatic refund. Pending unpaid reservations cancel with no fee. Cancellation policy version, retained amount, refund amount, and cancellation timestamp are persisted.
 - Hotel service start uses the reservation check-in date/time in India Standard Time. Charging uses the slot start timestamp. Post-start hotel cancellation does not release inventory for the current/past stay dates; future nights are released. Charging slots are not reopened after their start time.
 - Mobile cancellation confirmations display the estimated refund and retained amount, and cancellation detail models show the recorded amounts. Server values remain authoritative if time passes between quote and confirmation.
-- The new additive schema migration is required before deploying the API: `apps/api/migrations/neon/009_customer_cancellation_policy.sql` for the Neon migration track, or `supabase/migrations/202610200001_customer_cancellation_policy.sql` for the Supabase CLI track. Apply only the migration matching the actual `DATABASE_URL` provider, after checking the target database and backup. No production DB was modified here.
+- The additive cancellation schema migration is `supabase/migrations/202610200001_customer_cancellation_policy.sql`. It is safe to re-run when some columns already exist. No production database was modified here.
 - Hotel partial refund completion is represented as `refund_partial`; only a completed refund equal to the full captured amount marks the payment and reservation fully refunded.
 - Refund is still finance-reviewed and submitted through the configured Razorpay flow. Restaurant cancellation is outside this policy because restaurant order cancellation lifecycle is not implemented.
 
@@ -40,7 +40,7 @@ VoltStop has a functioning multi-surface foundation: Flutter driver app, partner
 
 - Publish the policy and expected refund-review timing in the customer terms and before purchase. Existing vendor `free_cancellation_hours` is no longer the customer cancellation computation and should be relabelled/retired if vendors continue to see it.
 - Apply the matching migration, deploy the API/mobile build, verify refund records appear in the finance console, and run staging cases at 49, 48, 24, 1, and 0 hours plus duplicate requests and failed/approved refunds. These tests were not run in this audit session.
-- Check database parity: the Supabase migration adds reservation check-in/out time columns used by current API code; the Neon migration track already adds these in migration 008.
+- Keep Supabase PostgreSQL as the sole application database. The API's `DATABASE_URL` must use the Supabase transaction pooler for Vercel deployments.
 
 ## P1 — Payment and settlement readiness
 

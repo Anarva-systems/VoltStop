@@ -591,43 +591,6 @@ def test_new_portal_apis_remain_behind_bearer_authentication(context):
         app.dependency_overrides[get_current_user] = override
 
 
-def test_customer_directory_supports_neon_without_supabase_auth_schema():
-    class Connection:
-        def __init__(self):
-            self.directory_query = ""
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return None
-
-        async def fetchval(self, query, *_args):
-            return False if "to_regclass('auth.users')" in query else 1
-
-        async def fetch(self, query, *_args):
-            self.directory_query = query
-            return [{"id": USER_ID, "name": "Driver", "email": "driver@example.test", "phone": None,
-                     "created_at": datetime.now(timezone.utc), "account_status": "unknown",
-                     "booking_count": 0, "complaint_count": 0}]
-
-    class Pool:
-        def __init__(self):
-            self.connection = Connection()
-
-        def acquire(self):
-            return self.connection
-
-    pool = Pool()
-    result = asyncio.run(customers(
-        _admin=None, database=SimpleNamespace(pool=pool), q=None, status=None, limit=50, offset=0,
-    ))
-    assert result["success"] is True
-    assert result["data"]["total"] == 1
-    assert result["data"]["items"][0]["account_status"] == "unknown"
-    assert "auth.users" not in pool.connection.directory_query
-
-
 def test_customer_directory_reads_email_from_supabase_auth_schema():
     class Connection:
         def __init__(self):

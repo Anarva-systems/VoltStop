@@ -87,15 +87,12 @@ class SupportRepository:
             return await self._detail(conn, ticket_id, True)
 
     async def _detail(self, conn: asyncpg.Connection, ticket_id: UUID, include_internal: bool) -> dict[str, Any] | None:
-        auth_users_ready = await conn.fetchval("select to_regclass('auth.users') is not null")
-        requester_email = "auth_user.email" if auth_users_ready else "p.email"
-        auth_join = "left join auth.users auth_user on auth_user.id=p.id" if auth_users_ready else ""
         ticket = await conn.fetchrow(
             f"""select t.id,t.requester_id,t.vendor_id,t.booking_id,t.category,t.subject,t.status,t.priority,t.assigned_to,
-                      t.created_at,t.updated_at,p.name as requester_name,{requester_email} as requester_email,
+                      t.created_at,t.updated_at,p.name as requester_name,auth_user.email as requester_email,
                       v.name as vendor_name
                from public.support_tickets t join public.profiles p on p.id=t.requester_id
-               {auth_join}
+               left join auth.users auth_user on auth_user.id=p.id
                left join public.vendors v on v.id=t.vendor_id where t.id=$1""", ticket_id,
         )
         if not ticket:
@@ -159,19 +156,16 @@ class SupportRepository:
     async def admin_list(self, status: str | None, priority: str | None, query: str | None, limit: int, offset: int) -> dict[str, Any]:
         async with self.pool.acquire() as conn:
             args = (status, priority, query)
-            auth_users_ready = await conn.fetchval("select to_regclass('auth.users') is not null")
-            requester_email = "auth_user.email" if auth_users_ready else "p.email"
-            auth_join = "left join auth.users auth_user on auth_user.id=p.id" if auth_users_ready else ""
-            where = f"($1::text is null or t.status=$1) and ($2::text is null or t.priority=$2) and ($3::text is null or t.subject ilike '%'||$3||'%' or {requester_email} ilike '%'||$3||'%' or p.name ilike '%'||$3||'%')"
+            where = "($1::text is null or t.status=$1) and ($2::text is null or t.priority=$2) and ($3::text is null or t.subject ilike '%'||$3||'%' or auth_user.email ilike '%'||$3||'%' or p.name ilike '%'||$3||'%')"
             total = await conn.fetchval(
-                f"select count(*) from public.support_tickets t join public.profiles p on p.id=t.requester_id {auth_join} where {where}", *args,
+                f"select count(*) from public.support_tickets t join public.profiles p on p.id=t.requester_id left join auth.users auth_user on auth_user.id=p.id where {where}", *args,
             )
             rows = await conn.fetch(
                 f"""select t.id,t.requester_id,t.vendor_id,t.booking_id,t.category,t.subject,t.status,t.priority,t.assigned_to,
-                           t.created_at,t.updated_at,p.name as requester_name,{requester_email} as requester_email,v.name as vendor_name,
+                           t.created_at,t.updated_at,p.name as requester_name,auth_user.email as requester_email,v.name as vendor_name,
                            (select count(*) from public.support_ticket_messages m where m.ticket_id=t.id) as message_count
                     from public.support_tickets t join public.profiles p on p.id=t.requester_id
-                    {auth_join}
+                    left join auth.users auth_user on auth_user.id=p.id
                     left join public.vendors v on v.id=t.vendor_id where {where}
                     order by case t.priority when 'urgent' then 0 when 'high' then 1 else 2 end,t.updated_at desc limit $4 offset $5""",
                 *args, limit, offset,

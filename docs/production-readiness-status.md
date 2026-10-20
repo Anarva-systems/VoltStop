@@ -67,7 +67,7 @@ secret in the API's ignored `.env`. The webhook secret is needed to receive
 webhook events and is reported separately by `/api/v1/ready`; it must be
 configured before public/staging use. Payment integration tests use synthetic
 payment/order records and a mocked provider response; no records were inserted
-into the connected Neon database.
+into the connected Supabase database.
 
 The 5% commission settings and payment-capture ledger are defined for new,
 verified charging bookings. They do not represent a vendor payout ledger or

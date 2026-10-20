@@ -33,7 +33,7 @@ deployment targets.
 The API defaults to `ENVIRONMENT=production`; local development must explicitly
 set `ENVIRONMENT=development`. Required API values
 include `SUPABASE_URL`, `SUPABASE_ANON_KEY` or `SUPABASE_PUBLISHABLE_KEY`,
-`DATABASE_URL`, TLS `REDIS_URL`, exact `VENDOR_PORTAL_ORIGIN`, and the matching
+`DATABASE_URL` from the Supabase PostgreSQL transaction pooler, TLS `REDIS_URL`, exact `VENDOR_PORTAL_ORIGIN`, and the matching
 live payment configuration. Never send secret values through chat or include
 them in source control.
 

@@ -30,17 +30,11 @@ async def customers(_admin: Annotated[AdminContext, Depends(require_permission("
                     limit: int = Query(default=50, ge=1, le=100), offset: int = Query(default=0, ge=0)) -> dict[str, Any]:
     search = q.strip() if q and q.strip() else None
     async with database.pool.acquire() as conn:
-        auth_users_ready = await conn.fetchval("select to_regclass('auth.users') is not null")
-        auth_join = "join auth.users u on u.id=p.id" if auth_users_ready else ""
-        account_status = (
-            "case when u.banned_until is not null and u.banned_until > now() then 'banned' else 'active' end"
-            if auth_users_ready else "'unknown'::text"
-        )
-        profile_email = "u.email" if auth_users_ready else "p.email"
-        profile_phone = "coalesce(nullif(u.phone,''),nullif(p.phone,''))" if auth_users_ready else "nullif(p.phone,'')"
-        status_filter = (
-            f"{account_status}=$2" if auth_users_ready else "($2::text is null or $2='unknown')"
-        )
+        auth_join = "join auth.users u on u.id=p.id"
+        account_status = "case when u.banned_until is not null and u.banned_until > now() then 'banned' else 'active' end"
+        profile_email = "u.email"
+        profile_phone = "coalesce(nullif(u.phone,''),nullif(p.phone,''))"
+        status_filter = f"{account_status}=$2"
         # profiles is created for every Auth account, including email-only vendor
         # and admin accounts. The Customers directory contains phone-authenticated
         # accounts only; vendor profiles are listed from public.vendors instead.
@@ -60,22 +54,12 @@ async def customers(_admin: Annotated[AdminContext, Depends(require_permission("
 async def customer_detail(customer_id: UUID, _admin: Annotated[AdminContext, Depends(require_permission("customers:read"))],
                           database: DatabaseDependency) -> dict[str, Any]:
     async with database.pool.acquire() as conn:
-        auth_users_ready = await conn.fetchval("select to_regclass('auth.users') is not null")
-        if auth_users_ready:
-            profile = await conn.fetchrow(
-                """select p.id,p.name,u.email,coalesce(nullif(u.phone,''),nullif(p.phone,'')) as phone,p.created_at,p.updated_at,u.banned_until,
-                          case when u.banned_until is not null and u.banned_until > now() then 'banned' else 'active' end as account_status
-                   from public.profiles p join auth.users u on u.id=p.id
-                   where p.id=$1 and coalesce(nullif(u.phone,''),nullif(p.phone,'')) is not null""", customer_id,
-            )
-        else:
-            # Neon stores the verified profile but delegates identity and account
-            # state to Supabase Auth. No local ban state exists in this schema.
-            profile = await conn.fetchrow(
-                """select p.id,p.name,p.email,p.phone,p.created_at,p.updated_at,
-                          null::timestamptz as banned_until,'unknown'::text as account_status
-                   from public.profiles p where p.id=$1 and nullif(p.phone,'') is not null""", customer_id,
-            )
+        profile = await conn.fetchrow(
+            """select p.id,p.name,u.email,coalesce(nullif(u.phone,''),nullif(p.phone,'')) as phone,p.created_at,p.updated_at,u.banned_until,
+                      case when u.banned_until is not null and u.banned_until > now() then 'banned' else 'active' end as account_status
+               from public.profiles p join auth.users u on u.id=p.id
+               where p.id=$1 and coalesce(nullif(u.phone,''),nullif(p.phone,'')) is not null""", customer_id,
+        )
         if not profile:
             raise ApiError(404, "CUSTOMER_NOT_FOUND", "Customer was not found")
         bookings = await conn.fetch(

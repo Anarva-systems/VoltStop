@@ -10,7 +10,7 @@ def staging_settings(**overrides) -> Settings:
         "supabase_url": "https://phase23-project.supabase.co",
         "supabase_anon_key": "synthetic-staging-anon-key",
         "vendor_portal_origin": "https://vendor.staging.voltstop.example",
-        "database_url": "postgresql://phase23_user:synthetic-db-pass@db.staging.example:5432/voltstop_staging",
+        "database_url": "postgresql://phase23_user:synthetic-db-pass@aws-0-ap-south-1.pooler.supabase.com:6543/voltstop_staging",
         "redis_url": "rediss://phase23_user:synthetic-redis-pass@redis.staging.example:6380/0",
         "razorpay_mode": "test",
         "razorpay_key_id": "rzp_test_phase23",
@@ -108,6 +108,11 @@ def test_staging_rejects_live_razorpay_credentials():
 def test_staging_requires_a_non_local_database():
     with pytest.raises(ValidationError, match="cannot be localhost"):
         staging_settings(database_url="postgresql://phase23_user:secret@localhost:5432/voltstop_staging")
+
+
+def test_staging_rejects_non_supabase_postgres():
+    with pytest.raises(ValidationError, match="must point to.*Supabase PostgreSQL"):
+        staging_settings(database_url="postgresql://phase23_user:secret@db.neon.example:5432/voltstop")
 
 
 def test_staging_requires_authenticated_redis():

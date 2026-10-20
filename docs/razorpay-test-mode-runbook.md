@@ -62,6 +62,6 @@ a cancelled/failed mock transaction and confirm it is not shown as paid.
 Razorpay Test Mode simulates the payment and does not deduct real money.
 
 Automated tests use clearly synthetic order/payment identifiers and a mocked
-Razorpay response. No dummy rows were written to the configured Neon database;
+Razorpay response. No dummy rows were written to the configured Supabase database;
 use a separate test database before inserting manual sample vendors, slots,
 hotel inventory, or restaurant items.

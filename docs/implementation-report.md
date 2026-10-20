@@ -9,7 +9,7 @@ Implementation is in the repository. Production functionality is **not verified*
 - Added mobile Trips tabs for My drives, Discover, and the existing reservation screen.
 - Added trip create/edit/details/list flows with NH-16 pilot stops, departure/optional arrival date and time, saved EV selection, listed seats, optional private notes, optional route-energy estimate, discovery opt-in, loading/error/empty states, and explicit lifecycle actions.
 - Added authenticated FastAPI endpoints for driver trip CRUD, discovery, and lifecycle transitions. All owner queries are scoped to the authenticated user. Create requests are idempotent per driver/key and conflicting key reuse returns a conflict.
-- Added additive Supabase and Neon schema migrations with timestamp, seat, route, status, and idempotency constraints. Supabase direct client access is select-own only; the API remains responsible for mutation authorization.
+- Added additive Supabase schema migrations with timestamp, seat, route, status, and idempotency constraints. Supabase direct client access is select-own only; the API remains responsible for mutation authorization.
 - Discovery omits private notes, account identity, and saved vehicle IDs. It does not reserve seats or process payments.
 - Route distance/energy and pitstop suggestions reuse current VoltStop route/provider data and are explicitly estimates. External provider unavailability leaves the scheduled trip intact.
 - Added backend API tests, migration contract and request-schema tests, Flutter trip-model/API-query tests, and a Trips-screen navigation test.
@@ -29,7 +29,7 @@ The last recorded debug APK used the development API URL `http://10.0.2.2:8000/a
 
 ## Required before production
 
-1. Review migration order and apply `202610140001_driver_upcoming_trips.sql` to the intended Supabase database, or `007_driver_upcoming_trips.sql` to the configured Neon database. Do not apply both to one database.
+1. Review migration order and apply `202610140001_driver_upcoming_trips.sql` to the configured Supabase database.
 2. Confirm a verified backup and staging migration before production rollout.
 3. Verify the trip endpoints against staging auth and database permissions before releasing the mobile app. Configure the phone build with its reachable HTTPS API URL; emulator localhost is not a phone-reachable address.
 4. Supply/verify an external route provider if route estimates are required. Live charger availability and pricing need a separately verified CPO/provider integration.

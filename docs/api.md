@@ -132,7 +132,8 @@ before retrying; the migration does not silently delete or repair them. See the
 
 ## Integration and security notes
 
-`DATABASE_URL` must point to the migrated Supabase PostgreSQL database and
+`DATABASE_URL` must point to the migrated Supabase PostgreSQL database (use its
+transaction pooler for Vercel) and
 `REDIS_URL` to Redis. PostgreSQL statements are parameterized; user profile
 and booking queries include the JWT-derived subject explicitly. Use a
 restricted database role where possible; never expose database or Supabase
