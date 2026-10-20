@@ -1061,17 +1061,31 @@ class Database:
         return [_record_value(item) or {} for item in rows]
 
     async def create_vendor_service(self, owner_id: UUID, vendor_id: UUID, values: dict[str, Any]) -> dict[str, Any]:
-        async with self.pool.acquire() as connection:
-            row = await connection.fetchrow(
-                """insert into public.vendor_services
-                     (vendor_id, service_type, display_name, description, price_inr, capacity, availability, is_active)
-                   select $1,$2,$3,$4,$5,$6,$7,$8 where exists(
-                     select 1 from public.vendors where id=$1 and owner_id=$9)
-                   returning id, vendor_id, service_type, display_name, description,
-                             price_inr, capacity, availability, is_active""",
-                vendor_id, values["service_type"], values["display_name"], values.get("description"),
-                values["price_inr"], values.get("capacity"), values["availability"], values["is_active"], owner_id,
-            )
+        try:
+            async with self.pool.acquire() as connection:
+                row = await connection.fetchrow(
+                    """insert into public.vendor_services
+                         (vendor_id, service_type, display_name, description, price_inr, capacity, availability, is_active)
+                       select $1,$2,$3,$4,$5,$6,$7,$8 where exists(
+                         select 1 from public.vendors where id=$1 and owner_id=$9)
+                       returning id, vendor_id, service_type, display_name, description,
+                                 price_inr, capacity, availability, is_active""",
+                    vendor_id, values["service_type"], values["display_name"], values.get("description"),
+                    values["price_inr"], values.get("capacity"), json.dumps(values["availability"]),
+                    values["is_active"], owner_id,
+                )
+        except asyncpg.UniqueViolationError as exc:
+            raise ApiError(
+                409,
+                "SERVICE_TYPE_ALREADY_EXISTS",
+                "A service of this type already exists. Edit the existing service instead.",
+            ) from exc
+        except asyncpg.CheckViolationError as exc:
+            raise ApiError(
+                422,
+                "SERVICE_TYPE_UNAVAILABLE",
+                "This service type is not supported by the current service catalogue.",
+            ) from exc
         if row is None:
             raise ApiError(404, "VENDOR_NOT_FOUND", "Vendor profile was not found")
         return _record_value(row) or {}
@@ -1082,7 +1096,11 @@ class Database:
         if not selected:
             raise ApiError(422, "EMPTY_PATCH", "Provide at least one service field to update")
         assignments = ", ".join(f"{key}=${index}" for index, (key, _) in enumerate(selected, start=1))
-        values = [value for _, value in selected]
+        # asyncpg's default JSON/JSONB codec accepts JSON text, not Python dicts.
+        values = [
+            json.dumps(value) if key == "availability" and value is not None else value
+            for key, value in selected
+        ]
         values.extend([service_id, vendor_id, owner_id])
         async with self.pool.acquire() as connection:
             if "service_type" in updates:
