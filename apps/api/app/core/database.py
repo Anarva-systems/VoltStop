@@ -1049,6 +1049,30 @@ class Database:
                 )
         return _record_value(row) or {}
 
+    async def delete_vendor_slot(self, owner_id: UUID, vendor_id: UUID, slot_id: UUID) -> None:
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                slot = await connection.fetchrow(
+                    """select cs.id, cs.slot_start_time
+                       from public.charging_slots cs join public.vendors v on v.id=cs.vendor_id
+                       where cs.id=$1 and cs.vendor_id=$2 and v.owner_id=$3
+                       for update of cs""",
+                    slot_id, vendor_id, owner_id,
+                )
+                if slot is None:
+                    raise ApiError(404, "SLOT_NOT_FOUND", "Slot was not found")
+                if slot["slot_start_time"] <= datetime.now(timezone.utc):
+                    raise ApiError(409, "SLOT_HISTORY_RETAINED", "Past and in-progress slots are retained")
+                has_booking_history = await connection.fetchval(
+                    "select exists(select 1 from public.bookings where slot_id=$1)", slot_id
+                )
+                if has_booking_history:
+                    raise ApiError(409, "SLOT_HAS_BOOKING_HISTORY", "Slots with booking history are retained")
+                await connection.execute(
+                    "delete from public.charging_slots where id=$1 and vendor_id=$2",
+                    slot_id, vendor_id,
+                )
+
     async def vendor_services(self, owner_id: UUID, vendor_id: UUID) -> list[dict[str, Any]]:
         async with self.pool.acquire() as connection:
             rows = await connection.fetch(

@@ -21,6 +21,12 @@ function responseErrorMessage(
     if (fields.has("image_url")) return "Use an image URL that starts with https:// or http://.";
     return "Check the business details and map location, then try again.";
   }
+  if (response.status >= 500) {
+    const requestId = response.headers.get("x-request-id") ?? response.headers.get("x-vercel-id");
+    return requestId
+      ? `VoltStop could not save this change right now. Retry shortly. Reference: ${requestId}`
+      : "VoltStop could not save this change right now. Retry shortly. If it continues, contact support.";
+  }
   return body && !body.success
     ? body.error.message
     : "The server returned an unexpected response.";
@@ -75,4 +81,8 @@ export async function apiPost<T>(path: string, token: string, value?: unknown): 
 
 export async function apiPatch<T>(path: string, token: string, value: unknown): Promise<T> {
   return vendorApi<T>(path, token, { method: "PATCH", body: JSON.stringify(value) });
+}
+
+export async function apiDelete<T>(path: string, token: string): Promise<T> {
+  return vendorApi<T>(path, token, { method: "DELETE" });
 }

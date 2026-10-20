@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
-import { apiPatch, apiPost } from "@/services/api";
+import { apiDelete, apiPatch, apiPost } from "@/services/api";
 import { Button, ErrorState, formatDate, formatMoney, formatTime, Icon, PageHeader, Panel, SectionHeading, Skeleton, StatePill, toast, useAccessToken, useVendorQuery } from "@/components/portal";
 import type { VendorService, VendorSlot } from "@/types/vendor";
 
@@ -14,6 +14,7 @@ export default function AvailabilityPage() {
   const services = useVendorQuery<VendorService[]>("/services", token);
   const [week, setWeek] = useState(0);
   const [dialog, setDialog] = useState<"create" | VendorSlot | null>(null);
+  const [deletingSlotId, setDeletingSlotId] = useState<string | null>(null);
   const monday = useMemo(() => {
     const date = new Date();
     date.setHours(0, 0, 0, 0);
@@ -56,6 +57,28 @@ export default function AvailabilityPage() {
     } catch (reason) { toast(reason instanceof Error ? reason.message : "Could not save slot"); }
   }
 
+  function deletionBlockedReason(slot: VendorSlot): string | null {
+    if (slot.locked) return "A driver is holding this slot";
+    if (slot.booking_history > 0) return "Slots with booking history are retained";
+    if (new Date(slot.slot_start_time).getTime() <= Date.now()) return "Past and in-progress slots are retained";
+    return null;
+  }
+
+  async function removeSlot(slot: VendorSlot) {
+    if (!token || deletionBlockedReason(slot)) return;
+    if (!window.confirm("Delete this availability slot? This can’t be undone.")) return;
+    setDeletingSlotId(slot.id);
+    try {
+      await apiDelete(`/availability/${slot.id}`, token);
+      slots.reload();
+      toast("Availability slot deleted");
+    } catch (reason) {
+      toast(reason instanceof Error ? reason.message : "Could not delete slot");
+    } finally {
+      setDeletingSlotId(null);
+    }
+  }
+
   return <>
     <PageHeader eyebrow="CAPACITY PLANNING" title="Availability" description="Plan your schedule. Slots with an active driver hold or booking stay protected." action={<Button disabled={!services.data?.some((service) => service.is_active)} onClick={() => setDialog("create")}><Icon name="calendar"/>Add slot</Button>}/>
     {!services.loading && !services.error && !services.data?.some((service) => service.is_active) && <Panel className="status-banner" style={{ marginBottom: 16 } as never}>Create and enable a service before adding a bookable time slot.</Panel>}
@@ -70,7 +93,7 @@ export default function AvailabilityPage() {
       {!visible.length && <div style={{ padding: 16 }}><p className="page-description">No slots are scheduled for this week. Add a slot to publish availability.</p></div>}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 9, padding: "13px 17px", borderTop: "1px solid var(--line)" }}>{["available", "limited", "full", "closed", "locked", "booked"].map((state) => <StatePill key={state} value={state}/>)}</div>
     </Panel>}
-    <Panel className="panel-pad" style={{ marginTop: 18 } as never}><SectionHeading title="Upcoming and past slots" detail="Historical slots are retained and can’t be deleted."/>{slots.loading ? <Skeleton rows={4}/> : slots.error ? <p className="page-description">Slot history unavailable.</p> : <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Date</th><th>Time</th><th>Service</th><th>Capacity</th><th>Price</th><th>Bookings</th><th>Status</th><th>Action</th></tr></thead><tbody>{(slots.data ?? []).slice(0, 50).map((slot) => <tr key={slot.id}><td>{formatDate(slot.slot_start_time)}</td><td>{formatTime(slot.slot_start_time)} – {formatTime(slot.slot_end_time)}</td><td>{slot.service_type.replaceAll("_", " ")}</td><td>{slot.active_bookings} / {slot.capacity}</td><td>{formatMoney(slot.price_inr)}</td><td>{slot.booking_history}</td><td><StatePill value={status(slot)}/></td><td><button className="action-link" disabled={slot.locked || slot.status === "booked"} onClick={() => setDialog(slot)}>Edit</button></td></tr>)}</tbody></table></div>}</Panel>
+    <Panel className="panel-pad" style={{ marginTop: 18 } as never}><SectionHeading title="Upcoming and past slots" detail="Delete future slots only when they have no booking history or active driver hold."/>{slots.loading ? <Skeleton rows={4}/> : slots.error ? <p className="page-description">Slot history unavailable.</p> : <div className="data-table-wrap"><table className="data-table"><thead><tr><th>Date</th><th>Time</th><th>Service</th><th>Capacity</th><th>Price</th><th>Bookings</th><th>Status</th><th>Action</th></tr></thead><tbody>{(slots.data ?? []).slice(0, 50).map((slot) => { const blockedReason = deletionBlockedReason(slot); return <tr key={slot.id}><td>{formatDate(slot.slot_start_time)}</td><td>{formatTime(slot.slot_start_time)} – {formatTime(slot.slot_end_time)}</td><td>{slot.service_type.replaceAll("_", " ")}</td><td>{slot.active_bookings} / {slot.capacity}</td><td>{formatMoney(slot.price_inr)}</td><td>{slot.booking_history}</td><td><StatePill value={status(slot)}/></td><td><div className="table-actions"><button className="action-link" disabled={slot.locked || slot.status === "booked"} onClick={() => setDialog(slot)}>Edit</button><button className="action-link" style={{ color: "#a72b23" }} disabled={Boolean(blockedReason) || deletingSlotId === slot.id} title={blockedReason ?? "Delete this slot"} onClick={() => void removeSlot(slot)}>{deletingSlotId === slot.id ? "Deleting…" : "Delete"}</button></div></td></tr>; })}</tbody></table></div>}</Panel>
     {dialog && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setDialog(null)}><div className="modal-card"><div className="modal-head"><div><h2>{dialog === "create" ? "Add availability" : "Edit slot"}</h2><p>Slot changes are checked against active bookings and driver holds.</p></div><button className="close-button" onClick={() => setDialog(null)}><Icon name="close"/></button></div>
       <form onSubmit={save}><div className="form-grid"><label className="label-control">Starts<input required name="start" type="datetime-local" className="input-control" defaultValue={dialog === "create" ? "" : toLocalInput(dialog.slot_start_time)}/></label><label className="label-control">Ends<input required name="end" type="datetime-local" className="input-control" defaultValue={dialog === "create" ? "" : toLocalInput(dialog.slot_end_time)}/></label>
         <label className="label-control">Service<select name="service_type" className="select-control" defaultValue={dialog === "create" ? services.data?.find((item) => item.is_active)?.service_type ?? "charging" : dialog.service_type}>{(services.data ?? []).filter((item) => item.is_active).map((service) => <option key={service.id} value={service.service_type}>{service.display_name ?? service.service_type.replaceAll("_", " ")}</option>)}</select></label>

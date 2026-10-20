@@ -199,6 +199,22 @@ async def update_vendor_slot(
     return success(slot, "Availability slot updated")
 
 
+@router.delete("/availability/{slot_id}")
+async def delete_vendor_slot(
+    slot_id: UUID, user: CurrentUser, database: DatabaseDependency,
+    redis=Depends(get_redis),
+) -> dict[str, Any]:
+    vendor_id = await _vendor_id(user, database)
+    try:
+        locked = bool(await redis.get(f"{LOCK_PREFIX}{slot_id}"))
+    except RedisError as exc:
+        raise ApiError(503, "LOCK_SERVICE_UNAVAILABLE", "Slot lock state could not be checked") from exc
+    if locked:
+        raise ApiError(409, "SLOT_TEMPORARILY_LOCKED", "A driver is holding this slot for booking")
+    await database.delete_vendor_slot(user.id, vendor_id, slot_id)
+    return success({"id": str(slot_id)}, "Availability slot deleted")
+
+
 @router.get("/services")
 async def list_vendor_services(user: CurrentUser, database: DatabaseDependency) -> dict[str, Any]:
     vendor_id = await _vendor_id(user, database)
