@@ -3,14 +3,15 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { apiGet } from "@/services/api";
+import { apiGet, userApi } from "@/services/api";
 import { useVendorAuth } from "@/components/vendor-auth";
+import type { VendorProfile } from "@/types/vendor";
 
 const navigation = [
   ["/vendor/dashboard", "Overview", "grid"],
   ["/vendor/requests", "Requests", "inbox"],
   ["/vendor/bookings", "Bookings", "calendar"],
-  ["/vendor/disputes", "Disputes", "shield"],
+  ["/vendor/disputes", "Booking issues", "shield"],
   ["/vendor/support", "Support tickets", "inbox"],
   ["/vendor/notifications", "Notifications", "bell"],
   ["/vendor/availability", "Availability", "clock"],
@@ -56,9 +57,28 @@ export function Icon({ name, size = 18, className = "" }: { name: string; size?:
 export function PortalShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, signOut } = useVendorAuth();
+  const { user, session, signOut } = useVendorAuth();
   const [mobileNav, setMobileNav] = useState(false);
-  const activeLabel = navigation.find(([href]) => pathname === href || (href !== "/vendor/dashboard" && pathname.startsWith(href)))?.[1] ?? "Overview";
+  const [vendorType, setVendorType] = useState<VendorProfile["type"] | null>(null);
+  useEffect(() => {
+    let active = true;
+    if (!session?.access_token) return () => { active = false; };
+    apiGet<VendorProfile>("/profile", session.access_token)
+      .then((profile) => { if (active) setVendorType(profile.type); })
+      .catch(() => { if (active) setVendorType(null); });
+    return () => { active = false; };
+  }, [session?.access_token]);
+
+  const visibleNavigation = navigation.filter(([href]) => {
+    if (vendorType === "hotel" && href === "/vendor/restaurants") return false;
+    if (vendorType === "restaurant" && href === "/vendor/hotels") return false;
+    return true;
+  });
+  useEffect(() => {
+    if (vendorType === "hotel" && pathname.startsWith("/vendor/restaurants")) router.replace("/vendor/services");
+    if (vendorType === "restaurant" && pathname.startsWith("/vendor/hotels")) router.replace("/vendor/services");
+  }, [pathname, router, vendorType]);
+  const activeLabel = visibleNavigation.find(([href]) => pathname === href || (href !== "/vendor/dashboard" && pathname.startsWith(href)))?.[1] ?? "Overview";
 
   async function logout() {
     await signOut();
@@ -72,7 +92,7 @@ export function PortalShell({ children }: { children: React.ReactNode }) {
       </Link>
       <div className="sidebar-caption">WORKSPACE</div>
       <nav className="sidebar-nav" aria-label="Vendor workspace">
-        {navigation.map(([href, label, icon]) => <Link key={href} href={href} aria-current={pathname === href ? "page" : undefined} className={`nav-link ${pathname === href || (href !== "/vendor/dashboard" && pathname.startsWith(href)) ? "nav-link-active" : ""}`}>
+        {visibleNavigation.map(([href, label, icon]) => <Link key={href} href={href} aria-current={pathname === href ? "page" : undefined} className={`nav-link ${pathname === href || (href !== "/vendor/dashboard" && pathname.startsWith(href)) ? "nav-link-active" : ""}`}>
           <Icon name={icon} /><span>{label}</span>
         </Link>)}
       </nav>
@@ -86,7 +106,7 @@ export function PortalShell({ children }: { children: React.ReactNode }) {
         <div className="breadcrumb">Workspace <span>/</span> <strong>{activeLabel}</strong></div>
         <div className="topbar-right"><span className="topbar-live"><i/> Signed in</span><div className="topbar-divider"/><div className="account-chip"><span className="avatar-circle">{(user?.email?.[0] ?? user?.phone?.[0] ?? "V").toUpperCase()}</span><span className="account-email">{user?.email ?? user?.phone ?? "Vendor account"}</span></div></div>
       </header>
-      {mobileNav && <nav id="vendor-mobile-navigation" className="mobile-nav" aria-label="Mobile vendor navigation">{navigation.map(([href,label,icon]) => <Link key={href} aria-current={pathname === href ? "page" : undefined} className={pathname === href || (href !== "/vendor/dashboard" && pathname.startsWith(href)) ? "mobile-nav-active" : undefined} onClick={() => setMobileNav(false)} href={href}><Icon name={icon}/>{label}</Link>)}</nav>}
+      {mobileNav && <nav id="vendor-mobile-navigation" className="mobile-nav" aria-label="Mobile vendor navigation">{visibleNavigation.map(([href,label,icon]) => <Link key={href} aria-current={pathname === href ? "page" : undefined} className={pathname === href || (href !== "/vendor/dashboard" && pathname.startsWith(href)) ? "mobile-nav-active" : undefined} onClick={() => setMobileNav(false)} href={href}><Icon name={icon}/>{label}</Link>)}</nav>}
       <main className="portal-content">{children}</main>
       <footer className="portal-footer"><span>VoltStop partner operations</span><span>NH-16 · Srikakulam ↔ Vijayawada</span></footer>
     </div>
@@ -134,7 +154,7 @@ export function EmptyState({ title, description, action }: { title: string; desc
   return <div className="state-box"><span className="state-icon"><Icon name="inbox" size={21}/></span><h3>{title}</h3><p>{description}</p>{action}</div>;
 }
 
-export function useVendorQuery<T>(path: string, token: string | null) {
+export function useVendorQuery<T>(path: string, token: string | null, scope: "vendor" | "user" = "vendor") {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -159,11 +179,11 @@ export function useVendorQuery<T>(path: string, token: string | null) {
     if (!token) { setData(null); setError(null); setLoading(false); return () => { live = false; }; }
     if (version === 0) setLoading(true);
     setError(null);
-    apiGet<T>(path, token).then((result) => { if (live) setData(result); }).catch((reason: unknown) => {
+    (scope === "user" ? userApi<T>(path, token) : apiGet<T>(path, token)).then((result) => { if (live) setData(result); }).catch((reason: unknown) => {
       if (live) setError(reason instanceof Error ? reason.message : "Request failed.");
     }).finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
-  }, [path, token, version]);
+  }, [path, scope, token, version]);
   return useMemo(() => ({ data, loading, error, reload, setData }), [data, error, loading, version]);
 }
 
