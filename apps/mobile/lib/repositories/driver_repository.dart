@@ -444,6 +444,11 @@ class DriverRepository {
         await _api.post('/hotels/reservations/$id/cancel') as Map,
       );
 
+  Future<Map<String, dynamic>> hotelCancellationQuote(String id) async =>
+      Map<String, dynamic>.from(
+        await _api.get('/hotels/reservations/$id/cancellation-quote') as Map,
+      );
+
   Future<Map<String, dynamic>> restaurantMenu(String vendorId) async =>
       Map<String, dynamic>.from(
         await _api.get('/restaurants/$vendorId/menu') as Map,
@@ -614,6 +619,11 @@ class DriverRepository {
   Future<Booking> cancelBooking(String id) async => Booking.fromJson(
         Map<String, dynamic>.from(
             await _api.post('/bookings/$id/cancel') as Map),
+      );
+
+  Future<Map<String, dynamic>> bookingCancellationQuote(String id) async =>
+      Map<String, dynamic>.from(
+        await _api.get('/bookings/$id/cancellation-quote') as Map,
       );
 
   Future<List<Map<String, dynamic>>> disputes() async {

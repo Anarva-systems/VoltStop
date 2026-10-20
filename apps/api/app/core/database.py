@@ -8,6 +8,7 @@ from uuid import UUID
 import asyncpg
 
 from app.core.errors import ApiError
+from app.core.cancellation_policy import POLICY_VERSION, cancellation_quote
 
 
 def _json_value(value: Any) -> Any:
@@ -1295,8 +1296,10 @@ class Database:
         async with self.pool.acquire() as connection:
             rows = await connection.fetch(
                 """select b.id, b.user_id, b.vendor_id, b.slot_id, b.payment_id,
-                          b.amount_paid, b.status, b.created_at, b.updated_at,
+                          b.amount_paid,b.status,b.cancellation_fee_inr,b.refund_amount_inr,
+                          b.cancellation_policy_version,b.cancelled_at,b.created_at,b.updated_at,
                           p.razorpay_order_id, p.amount_inr, p.currency, p.status as payment_status,
+                          (select r.status from public.refunds r where r.booking_id=b.id order by r.created_at desc limit 1) as refund_status,
                           v.name as vendor_name, v.address as vendor_address, v.type as vendor_type,
                           v.lat as vendor_lat, v.lng as vendor_lng, cs.service_type,
                           cs.slot_start_time, cs.slot_end_time
@@ -1315,8 +1318,10 @@ class Database:
         async with self.pool.acquire() as connection:
             row = await connection.fetchrow(
                 """select b.id, b.user_id, b.vendor_id, b.slot_id, b.payment_id,
-                          b.amount_paid, b.status, b.created_at, b.updated_at,
+                          b.amount_paid,b.status,b.cancellation_fee_inr,b.refund_amount_inr,
+                          b.cancellation_policy_version,b.cancelled_at,b.created_at,b.updated_at,
                           p.razorpay_order_id, p.amount_inr, p.currency, p.status as payment_status,
+                          (select r.status from public.refunds r where r.booking_id=b.id order by r.created_at desc limit 1) as refund_status,
                           v.name as vendor_name, v.address as vendor_address, v.type as vendor_type,
                           v.lat as vendor_lat, v.lng as vendor_lng, cs.service_type,
                           cs.slot_start_time, cs.slot_end_time
@@ -1336,11 +1341,43 @@ class Database:
                     raise ApiError(403, "FORBIDDEN", "You cannot access this booking")
         return _record_value(row)
 
+    async def booking_cancellation_quote(self, user_id: UUID, booking_id: UUID) -> dict[str, Any] | None:
+        async with self.pool.acquire() as connection:
+            row = await connection.fetchrow(
+                """select b.id,b.user_id,b.status,cs.slot_start_time,p.amount_inr,
+                          p.status as payment_status,p.webhook_verified,p.razorpay_payment_id
+                   from public.bookings b join public.charging_slots cs on cs.id=b.slot_id
+                   left join public.payments p on p.id=b.payment_id where b.id=$1""", booking_id)
+        if row is None:
+            return None
+        if row["user_id"] != user_id:
+            raise ApiError(403, "FORBIDDEN", "You cannot access this booking")
+        if row["status"] not in ("pending", "confirmed"):
+            raise ApiError(409, "BOOKING_NOT_CANCELLABLE", "Booking is not cancellable in its current state")
+        paid = row["payment_status"] == "captured" and row["webhook_verified"]
+        if row["payment_status"] in ("captured", "authorized") and not paid:
+            raise ApiError(409, "PAYMENT_NOT_VERIFIED", "Cancellation is blocked until payment is reconciled")
+        if row["status"] == "confirmed" and not paid:
+            raise ApiError(409, "PAYMENT_NOT_VERIFIED", "Cancellation is blocked until payment is verified")
+        if paid and not row["razorpay_payment_id"]:
+            raise ApiError(409, "PAYMENT_NOT_VERIFIED", "The captured payment is missing its provider reference")
+        if not paid:
+            return {"policy_version": POLICY_VERSION, "tier": "payment_pending", "hours_before_start": None,
+                    "captured_amount_inr": Decimal("0.00"), "customer_refund_inr": Decimal("0.00"),
+                    "retained_amount_inr": Decimal("0.00"), "refund_percent": 0,
+                    "gateway_fee_deduction_inr": Decimal("0.00")}
+        return cancellation_quote(Decimal(row["amount_inr"]), row["slot_start_time"])
+
     async def cancel_booking(self, user_id: UUID, booking_id: UUID) -> dict[str, Any] | None:
         async with self.pool.acquire() as connection:
             async with connection.transaction():
                 row = await connection.fetchrow(
-                    "select id, slot_id, status from public.bookings where id=$1 and user_id=$2 for update",
+                    """select b.id,b.user_id,b.slot_id,b.status,b.payment_id,b.cancellation_fee_inr,
+                              b.refund_amount_inr,b.cancellation_policy_version,b.cancelled_at,cs.slot_start_time,
+                              p.amount_inr,p.status as payment_status,p.webhook_verified,p.razorpay_payment_id
+                       from public.bookings b join public.charging_slots cs on cs.id=b.slot_id
+                       left join public.payments p on p.id=b.payment_id
+                       where b.id=$1 and b.user_id=$2 for update of b""",
                     booking_id,
                     user_id,
                 )
@@ -1351,31 +1388,71 @@ class Database:
                     if exists:
                         raise ApiError(403, "FORBIDDEN", "You cannot cancel this booking")
                     return None
-                if row["status"] != "pending":
-                    raise ApiError(409, "BOOKING_NOT_CANCELLABLE", "Only pending bookings can be cancelled")
+                if row["status"] == "cancelled" and row["cancelled_at"] is not None:
+                    replay = await connection.fetchrow(
+                        """select b.id,b.user_id,b.vendor_id,b.slot_id,b.payment_id,b.amount_paid,b.status,
+                                  b.cancellation_fee_inr,b.refund_amount_inr,b.cancellation_policy_version,b.cancelled_at,
+                                  b.created_at,b.updated_at,p.razorpay_order_id,p.amount_inr,p.currency,p.status as payment_status,
+                                  (select r.status from public.refunds r where r.booking_id=b.id order by r.created_at desc limit 1) as refund_status
+                           from public.bookings b left join public.payments p on p.id=b.payment_id where b.id=$1""", booking_id)
+                    return _record_value(replay)
+                if row["payment_id"] is not None:
+                    await connection.fetchrow("select id from public.payments where id=$1 for update", row["payment_id"])
+                if row["status"] not in ("pending", "confirmed"):
+                    raise ApiError(409, "BOOKING_NOT_CANCELLABLE", "Booking is not cancellable in its current state")
+                paid = row["payment_status"] == "captured" and row["webhook_verified"]
+                if row["payment_status"] in ("captured", "authorized") and not paid:
+                    raise ApiError(409, "PAYMENT_NOT_VERIFIED", "Cancellation is blocked until payment is reconciled")
+                if row["status"] == "confirmed" and not paid:
+                    raise ApiError(409, "PAYMENT_NOT_VERIFIED", "Cancellation is blocked until payment is verified")
+                if paid:
+                    if not row["razorpay_payment_id"]:
+                        raise ApiError(409, "PAYMENT_NOT_VERIFIED", "The captured payment is missing its provider reference")
+                    active_refund = await connection.fetchval(
+                        """select exists(select 1 from public.refunds where payment_id=$1
+                           and status not in ('failed','rejected'))""", row["payment_id"])
+                    if active_refund:
+                        raise ApiError(409, "REFUND_ALREADY_IN_PROGRESS", "A refund for this booking is already in progress")
+                    quote = cancellation_quote(Decimal(row["amount_inr"]), row["slot_start_time"])
+                else:
+                    quote = {"policy_version": POLICY_VERSION, "tier": "payment_pending",
+                             "customer_refund_inr": Decimal("0.00"), "retained_amount_inr": Decimal("0.00")}
+                refund_amount = Decimal(quote["customer_refund_inr"])
+                retained_amount = Decimal(quote["retained_amount_inr"])
+                if paid and refund_amount > 0:
+                    await connection.execute(
+                        """insert into public.refunds(booking_id,payment_id,requested_by,amount_inr,currency,
+                                  reason,status,idempotency_key)
+                           values($1,$2,$3,$4,'INR','Customer cancellation','requested',$5)
+                           on conflict(idempotency_key) do nothing""",
+                        booking_id, row["payment_id"], user_id, refund_amount, f"customer-cancel:{booking_id}")
+                elif not paid and row["payment_id"]:
+                    await connection.execute(
+                        "update public.payments set status='failed',updated_at=now() where id=$1 and status in ('pending','authorized')",
+                        row["payment_id"])
                 await connection.execute(
-                    "update public.bookings set status='cancelled' where id=$1", booking_id
-                )
+                    """update public.bookings set status='cancelled',cancellation_fee_inr=$2,
+                       refund_amount_inr=$3,cancellation_policy_version=$4,cancelled_at=now(),updated_at=now()
+                       where id=$1""", booking_id, retained_amount, refund_amount, quote["policy_version"])
                 await connection.execute(
-                    "update public.payments set status='failed' where booking_id=$1 and status='pending'",
-                    booking_id,
-                )
-                await connection.execute(
-                    "insert into public.booking_events (booking_id, event_type) values ($1, 'cancelled')",
-                    booking_id,
-                )
+                    """insert into public.booking_events(booking_id,event_type,metadata) values($1,'cancelled',$2::jsonb)""",
+                    booking_id, json.dumps({"policy_version": quote["policy_version"], "tier": quote["tier"],
+                                            "refund_amount_inr": str(refund_amount),
+                                            "cancellation_fee_inr": str(retained_amount)}))
                 await connection.execute(
                     """update public.charging_slots cs set status='available'
-                       where cs.id=$1 and cs.status='booked' and (
+                       where cs.id=$1 and cs.status='booked' and cs.slot_start_time>now() and (
                          select count(*) from public.bookings b
                          where b.slot_id=cs.id and b.status in ('pending','confirmed')
                        ) < cs.capacity""",
                     row["slot_id"],
                 )
                 updated = await connection.fetchrow(
-                    """select b.id, b.user_id, b.vendor_id, b.slot_id, b.payment_id,
-                              b.amount_paid, b.status, b.created_at, b.updated_at,
-                              p.razorpay_order_id, p.amount_inr, p.currency, p.status as payment_status
+                    """select b.id,b.user_id,b.vendor_id,b.slot_id,b.payment_id,b.amount_paid,b.status,
+                              b.cancellation_fee_inr,b.refund_amount_inr,b.cancellation_policy_version,b.cancelled_at,
+                              b.created_at,b.updated_at,
+                              p.razorpay_order_id,p.amount_inr,p.currency,p.status as payment_status,
+                              (select r.status from public.refunds r where r.booking_id=b.id order by r.created_at desc limit 1) as refund_status
                        from public.bookings b left join public.payments p on p.id=b.payment_id
                        where b.id=$1""",
                     booking_id,

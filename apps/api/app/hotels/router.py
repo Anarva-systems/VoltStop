@@ -88,6 +88,15 @@ async def get_reservation(reservation_id: UUID, user: CurrentUser, database: Dat
     return success(row)
 
 
+@router.get("/reservations/{reservation_id}/cancellation-quote")
+async def reservation_cancellation_quote(reservation_id: UUID, user: CurrentUser,
+                                         database: DatabaseDependency) -> dict[str, Any]:
+    quote = await _repo(database).cancellation_quote(user.id, reservation_id)
+    if quote is None:
+        raise ApiError(404, "RESERVATION_NOT_FOUND", "Reservation was not found")
+    return success(quote, "Cancellation estimate calculated")
+
+
 @router.post("/reservations/{reservation_id}/cancel")
 async def cancel_reservation(reservation_id: UUID, user: CurrentUser, database: DatabaseDependency) -> dict[str, Any]:
     row = await _repo(database).cancel(user.id, reservation_id)

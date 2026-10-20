@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID
 
 from app.core.errors import ApiError
+from app.core.cancellation_policy import POLICY_VERSION, cancellation_quote
 
 HOLD_MINUTES = 15
 
@@ -243,7 +244,8 @@ class HotelRepository:
                 await self._expire_pending(conn)
                 row = await conn.fetchrow(
             """select r.id,r.customer_id,r.vendor_id,r.room_type_id,r.check_in,r.check_out,r.check_in_time,r.check_out_time,r.guests,r.rooms,
-                          r.amount_inr,r.currency,r.status,r.free_cancellation_hours,r.hold_expires_at,r.created_at,r.updated_at,
+                          r.amount_inr,r.currency,r.status,r.free_cancellation_hours,r.cancellation_fee_inr,r.refund_amount_inr,
+                          r.cancellation_policy_version,r.cancelled_at,r.hold_expires_at,r.created_at,r.updated_at,
                           v.name as vendor_name,v.address as vendor_address,v.lat as vendor_lat,v.lng as vendor_lng,
                           rt.name as room_name,rt.description as room_description,
                           rt.max_guests,p.razorpay_order_id,p.razorpay_payment_id,p.amount_inr as payment_amount,
@@ -269,6 +271,7 @@ class HotelRepository:
                 await self._expire_pending(conn)
                 rows = await conn.fetch(
                     """select r.id,r.vendor_id,r.room_type_id,r.check_in,r.check_out,r.check_in_time,r.check_out_time,r.guests,r.rooms,r.amount_inr,r.currency,r.status,
+                          r.cancellation_fee_inr,r.refund_amount_inr,r.cancellation_policy_version,r.cancelled_at,
                           r.hold_expires_at,r.created_at,v.name as vendor_name,v.address as vendor_address,
                           v.lat as vendor_lat,v.lng as vendor_lng,rt.name as room_name,p.status as payment_status,
                           (select f.status from public.hotel_refunds f where f.reservation_id=r.id order by f.created_at desc limit 1) as refund_status
@@ -277,6 +280,35 @@ class HotelRepository:
                    left join public.hotel_reservation_payments p on p.reservation_id=r.id
                    where r.customer_id=$1 order by r.created_at desc limit 100""", customer_id)
         return [_row(item) or {} for item in rows]
+
+    async def cancellation_quote(self, customer_id: UUID, reservation_id: UUID) -> dict[str, Any] | None:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """select r.id,r.customer_id,r.check_in,r.check_in_time,r.amount_inr,r.status,
+                          p.status as payment_status,p.webhook_verified,p.razorpay_payment_id
+                   from public.hotel_reservations r left join public.hotel_reservation_payments p on p.reservation_id=r.id
+                   where r.id=$1""", reservation_id)
+        if row is None:
+            return None
+        if row["customer_id"] != customer_id:
+            raise ApiError(403, "FORBIDDEN", "You cannot access this reservation")
+        if row["status"] not in ("payment_pending", "confirmed"):
+            raise ApiError(409, "RESERVATION_NOT_CANCELLABLE", "Reservation is not cancellable in its current state")
+        is_paid = row["payment_status"] == "captured" and row["webhook_verified"]
+        if row["payment_status"] in ("captured", "authorized") and not (row["payment_status"] == "captured" and row["webhook_verified"]):
+            raise ApiError(409, "PAYMENT_NOT_VERIFIED", "Cancellation is blocked until payment is reconciled")
+        if row["status"] == "confirmed" and not is_paid:
+            raise ApiError(409, "PAYMENT_NOT_VERIFIED", "Cancellation is blocked until payment is verified")
+        if is_paid and not row["razorpay_payment_id"]:
+            raise ApiError(409, "PAYMENT_NOT_VERIFIED", "The captured payment is missing its provider reference")
+        if not is_paid:
+            return {"policy_version": POLICY_VERSION, "tier": "payment_pending", "hours_before_start": None,
+                    "captured_amount_inr": Decimal("0.00"), "customer_refund_inr": Decimal("0.00"),
+                    "retained_amount_inr": Decimal("0.00"), "refund_percent": 0,
+                    "gateway_fee_deduction_inr": Decimal("0.00")}
+        india_tz = timezone(timedelta(hours=5, minutes=30))
+        service_start = datetime.combine(row["check_in"], row["check_in_time"]).replace(tzinfo=india_tz)
+        return cancellation_quote(Decimal(row["amount_inr"]), service_start)
 
     async def cancel(self, customer_id: UUID, reservation_id: UUID) -> dict[str, Any] | None:
         async with self.pool.acquire() as conn:
@@ -288,35 +320,57 @@ class HotelRepository:
                     return None
                 if reservation["customer_id"] != customer_id:
                     raise ApiError(403, "FORBIDDEN", "You cannot cancel this reservation")
+                if reservation["status"] in ("cancelled", "refund_pending", "refund_failed", "refund_partial", "refunded") and reservation["cancelled_at"] is not None:
+                    return _row(reservation)
                 if reservation["status"] not in ("payment_pending", "confirmed"):
                     raise ApiError(409, "RESERVATION_NOT_CANCELLABLE", "Reservation is not cancellable in its current state")
                 payment = await conn.fetchrow(
                     "select * from public.hotel_reservation_payments where reservation_id=$1 for update", reservation_id)
                 is_paid = bool(payment and payment["status"] == "captured" and payment["webhook_verified"])
+                if payment and payment["status"] in ("captured", "authorized") and not is_paid:
+                    raise ApiError(409, "PAYMENT_NOT_VERIFIED", "Cancellation is blocked until payment is reconciled")
                 if reservation["status"] == "confirmed" and not is_paid:
                     raise ApiError(409, "PAYMENT_NOT_VERIFIED", "Cancellation is blocked until payment is verified")
+                if is_paid and not payment["razorpay_payment_id"]:
+                    raise ApiError(409, "PAYMENT_NOT_VERIFIED", "The captured payment is missing its provider reference")
                 if reservation["status"] == "confirmed":
-                    local_check_in = datetime.combine(reservation["check_in"], datetime.min.time()).replace(tzinfo=timezone(timedelta(hours=5, minutes=30)))
-                    cutoff = local_check_in - timedelta(hours=reservation["free_cancellation_hours"])
-                    if reservation["free_cancellation_hours"] == 0 or datetime.now(timezone.utc) > cutoff.astimezone(timezone.utc):
-                        raise ApiError(409, "CANCELLATION_WINDOW_CLOSED", "The free cancellation window has closed")
+                    active_refund = await conn.fetchval(
+                        """select exists(select 1 from public.hotel_refunds where payment_id=$1
+                           and status not in ('failed','rejected'))""", payment["id"])
+                    if active_refund:
+                        raise ApiError(409, "REFUND_ALREADY_IN_PROGRESS", "A refund for this reservation is already in progress")
+                    india_tz = timezone(timedelta(hours=5, minutes=30))
+                    service_start = datetime.combine(reservation["check_in"], reservation["check_in_time"]).replace(tzinfo=india_tz)
+                    quote = cancellation_quote(Decimal(reservation["amount_inr"]), service_start)
+                else:
+                    quote = {"policy_version": POLICY_VERSION, "customer_refund_inr": Decimal("0.00"),
+                             "retained_amount_inr": Decimal("0.00"), "tier": "payment_pending"}
                 nights = await conn.fetch(
                     "select room_type_id,stay_date,rooms from public.hotel_reservation_nights where reservation_id=$1 order by stay_date for update", reservation_id)
+                started = quote["tier"] == "service_started"
+                local_today = _local_today()
                 for night in nights:
+                    if started and night["stay_date"] <= local_today:
+                        continue
                     await conn.execute(
                         """update public.hotel_room_inventory set rooms_available=least(room_capacity,rooms_available+$3),updated_at=now()
                            where room_type_id=$1 and stay_date=$2""", night["room_type_id"], night["stay_date"], night["rooms"])
-                if is_paid:
+                refund_amount = Decimal(quote["customer_refund_inr"])
+                fee_amount = Decimal(quote["retained_amount_inr"])
+                if is_paid and refund_amount > 0:
                     await conn.execute(
                         """insert into public.hotel_refunds(reservation_id,payment_id,amount_inr,reason,idempotency_key,requested_by)
                            values($1,$2,$3,'Customer cancellation','cancel:'||$1::text,$4) on conflict(idempotency_key) do nothing""",
-                        reservation_id, payment["id"], reservation["amount_inr"], customer_id)
+                        reservation_id, payment["id"], refund_amount, customer_id)
                     status = "refund_pending"
                 else:
                     if payment:
                         await conn.execute("update public.hotel_reservation_payments set status='failed',updated_at=now() where id=$1 and status='pending'", payment["id"])
                     status = "cancelled"
-                await conn.execute("update public.hotel_reservations set status=$2,updated_at=now() where id=$1", reservation_id, status)
+                await conn.execute(
+                    """update public.hotel_reservations set status=$2,cancellation_fee_inr=$3,
+                       refund_amount_inr=$4,cancellation_policy_version=$5,cancelled_at=now(),updated_at=now() where id=$1""",
+                    reservation_id, status, fee_amount, refund_amount, quote["policy_version"])
         return await self.reservation(customer_id, reservation_id)
 
     async def vendor_rooms(self, owner_id: UUID, vendor_id: UUID) -> list[dict[str, Any]]:
@@ -410,8 +464,10 @@ class HotelRepository:
     async def vendor_reservations(self, owner_id: UUID, vendor_id: UUID) -> list[dict[str, Any]]:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
-                """select r.id,r.customer_id,r.room_type_id,r.check_in,r.check_out,r.check_in_time,r.check_out_time,r.guests,r.rooms,r.amount_inr,r.currency,r.status,r.created_at,
-                          rt.name as room_name,p.status as payment_status,p.webhook_verified,pr.name as customer_name,pr.phone as customer_phone
+                """select r.id,r.customer_id,r.room_type_id,r.check_in,r.check_out,r.check_in_time,r.check_out_time,r.guests,r.rooms,r.amount_inr,r.currency,r.status,
+                          r.cancellation_fee_inr,r.refund_amount_inr,r.cancellation_policy_version,r.cancelled_at,r.created_at,
+                          rt.name as room_name,p.status as payment_status,p.webhook_verified,pr.name as customer_name,pr.phone as customer_phone,
+                          (select f.status from public.hotel_refunds f where f.reservation_id=r.id order by f.created_at desc limit 1) as refund_status
                    from public.hotel_reservations r join public.vendors v on v.id=r.vendor_id
                    join public.hotel_room_types rt on rt.id=r.room_type_id join public.profiles pr on pr.id=r.customer_id
                    left join public.hotel_reservation_payments p on p.reservation_id=r.id
@@ -484,6 +540,22 @@ class HotelRepository:
                 refund_id,provider_id,provider_status,local_status,error)
             if row is not None and local_status == "failed":
                 await conn.execute("update public.hotel_reservations set status='refund_failed',updated_at=now() where id=(select reservation_id from public.hotel_refunds where id=$1) and status='refund_pending'",refund_id)
+            elif row is not None and local_status == "completed":
+                state = await conn.fetchrow(
+                    """select f.reservation_id,f.payment_id,p.amount_inr,
+                              (select coalesce(sum(x.amount_inr),0) from public.hotel_refunds x
+                               where x.payment_id=f.payment_id and x.status='completed') as refunded
+                       from public.hotel_refunds f join public.hotel_reservation_payments p on p.id=f.payment_id
+                       where f.id=$1""", refund_id)
+                if state is not None:
+                    fully_refunded = Decimal(state["refunded"]) >= Decimal(state["amount_inr"])
+                    await conn.execute(
+                        "update public.hotel_reservations set status=$2,updated_at=now() where id=$1 and status='refund_pending'",
+                        state["reservation_id"], "refunded" if fully_refunded else "refund_partial")
+                    if fully_refunded:
+                        await conn.execute(
+                            "update public.hotel_reservation_payments set status='refunded',updated_at=now() where id=$1",
+                            state["payment_id"])
         if row is None:
             raise ApiError(404,"HOTEL_REFUND_NOT_FOUND","Hotel refund request was not found")
         return _row(row) or {}
@@ -575,6 +647,8 @@ class HotelRepository:
                     if Decimal(total)>=Decimal(payment["amount_inr"]):
                         await conn.execute("update public.hotel_reservation_payments set status='refunded',updated_at=now() where id=$1",payment["id"])
                         await conn.execute("update public.hotel_reservations set status='refunded',updated_at=now() where id=$1",refund["reservation_id"])
+                    else:
+                        await conn.execute("update public.hotel_reservations set status='refund_partial',updated_at=now() where id=$1 and status='refund_pending'",refund["reservation_id"])
                 elif status=="failed":
                     await conn.execute("update public.hotel_reservations set status='refund_failed',updated_at=now() where id=$1 and status='refund_pending'",refund["reservation_id"])
                 return True

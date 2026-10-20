@@ -17,6 +17,9 @@ class Booking {
     this.vendorLng,
     this.slotStartTime,
     this.slotEndTime,
+    this.cancellationFeeInr = 0,
+    this.refundAmountInr = 0,
+    this.refundStatus,
   });
 
   final String id;
@@ -36,6 +39,9 @@ class Booking {
   final double? vendorLng;
   final DateTime? slotStartTime;
   final DateTime? slotEndTime;
+  final double cancellationFeeInr;
+  final double refundAmountInr;
+  final String? refundStatus;
 
   factory Booking.fromJson(Map<String, dynamic> json) => Booking(
         id: '${json['id'] ?? ''}',
@@ -61,5 +67,10 @@ class Booking {
             DateTime.tryParse('${json['slot_start_time'] ?? ''}')?.toLocal(),
         slotEndTime:
             DateTime.tryParse('${json['slot_end_time'] ?? ''}')?.toLocal(),
+        cancellationFeeInr:
+            double.tryParse('${json['cancellation_fee_inr'] ?? 0}') ?? 0,
+        refundAmountInr:
+            double.tryParse('${json['refund_amount_inr'] ?? 0}') ?? 0,
+        refundStatus: json['refund_status']?.toString(),
       );
 }

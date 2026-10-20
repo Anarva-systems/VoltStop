@@ -2544,9 +2544,9 @@ class _HotelBookingScreenState extends State<HotelBookingScreen> {
                       Text('Total: ₹${quote['amount_inr']}',
                           style: const TextStyle(
                               fontSize: 18, fontWeight: FontWeight.w900)),
-                      Text(
-                          'Free cancellation until ${quote['free_cancellation_hours']}h before check-in',
-                          style: const TextStyle(color: VoltColors.muted)),
+                      const Text(
+                          'Cancellation refunds depend on how long before check-in you cancel. The exact amount is shown before you confirm.',
+                          style: TextStyle(color: VoltColors.muted)),
                       const SizedBox(height: 8),
                       const Text(
                           'The server will check this exact price and availability again before creating your payment order.'),
@@ -2812,7 +2812,7 @@ class _HotelBookingScreenState extends State<HotelBookingScreen> {
                                         style: const TextStyle(
                                             color: VoltColors.muted)),
                                     Text(
-                                        'From ₹${room['nightly_rate_inr']} / night · Free cancellation until ${room['free_cancellation_hours']}h before check-in'),
+                                        'From ₹${room['nightly_rate_inr']} / night · Cancellation refund depends on timing'),
                                     const SizedBox(height: 4),
                                     Text(
                                         room['is_open_24_hours'] == true
@@ -3156,6 +3156,10 @@ class _BookingReviewScreenState extends State<BookingReviewScreen> {
           const Text(
               'Taxes and fees are included only when listed by the service provider.',
               style: TextStyle(color: VoltColors.muted, fontSize: 12)),
+          const SizedBox(height: 10),
+          const VoltCard(
+              child: Text(
+                  'Cancellation refund depends on when you cancel: 48+ hours before service 100%, 24–48 hours 90%, under 24 hours 50%, and after service starts no refund. No extra gateway fee is deducted.')),
           const SizedBox(height: 18),
           SizedBox(
               width: double.infinity,
@@ -4156,7 +4160,7 @@ class _BookingsScreenState extends State<BookingsScreen>
                               style:
                                   const TextStyle(fontWeight: FontWeight.w800)),
                           subtitle: Text(
-                              '${_hotelDate(item['check_in'])} ${_hotelTime(item['check_in_time'])} – ${_hotelDate(item['check_out'])} ${_hotelTime(item['check_out_time'])} · ${item['guests']} guests\n₹${item['amount_inr']} · $status · payment ${item['payment_status'] ?? 'pending'}',
+                              '${_hotelDate(item['check_in'])} ${_hotelTime(item['check_in_time'])} – ${_hotelDate(item['check_out'])} ${_hotelTime(item['check_out_time'])} · ${item['guests']} guests\n₹${item['amount_inr']} · $status · payment ${item['payment_status'] ?? 'pending'}${item['refund_amount_inr'] != null ? '\nRefund ₹${item['refund_amount_inr']} · retained ₹${item['cancellation_fee_inr'] ?? 0}' : ''}',
                               maxLines: 3),
                           trailing: canCancel
                               ? IconButton(
@@ -4189,6 +4193,8 @@ class _BookingsScreenState extends State<BookingsScreen>
                   Text('${item['rooms']} room(s) · ${item['guests']} guest(s)'),
                   Text('₹${item['amount_inr']} · ${item['status']}'),
                   Text('Payment: ${item['payment_status'] ?? 'pending'}'),
+                  if (item['refund_amount_inr'] != null)
+                    Text('Refund ₹${item['refund_amount_inr']} · retained ₹${item['cancellation_fee_inr'] ?? 0}'),
                   if (item['vendor_lat'] is num && item['vendor_lng'] is num)
                     SizedBox(
                         width: double.infinity,
@@ -4218,12 +4224,25 @@ class _BookingsScreenState extends State<BookingsScreen>
   }
 
   Future<void> _cancelHotelReservation(Map<String, dynamic> item) async {
+    Map<String, dynamic> quote;
+    try {
+      quote = await widget.app.driverRepository
+          .hotelCancellationQuote('${item['id']}');
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Could not check refund estimate: $error')));
+      }
+      return;
+    }
+    final refund = quote['customer_refund_inr'] ?? 0;
+    final retained = quote['retained_amount_inr'] ?? 0;
     final confirm = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
               title: const Text('Cancel hotel reservation?'),
-              content: const Text(
-                  'The server checks the reservation policy and releases room inventory. Any eligible refund is reviewed by finance.'),
+              content: Text(
+                  'Estimated refund: ₹$refund\nRetained amount: ₹$retained\n\nNo extra gateway fee is deducted. The final amount is checked by the server; eligible refunds are reviewed by finance.'),
               actions: [
                 TextButton(
                     onPressed: () => Navigator.pop(context, false),
@@ -4347,12 +4366,25 @@ class _BookingDetailsScreenState extends State<BookingDetailsScreen> {
   }
 
   Future<void> _cancel() async {
+    Map<String, dynamic> quote;
+    try {
+      quote = await widget.app.driverRepository
+          .bookingCancellationQuote(_booking.id);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Could not check refund estimate: $error')));
+      }
+      return;
+    }
+    final refund = quote['customer_refund_inr'] ?? 0;
+    final retained = quote['retained_amount_inr'] ?? 0;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Cancel this booking?'),
-        content: const Text(
-            'This cancels the pending reservation. The server will verify that it is still eligible.'),
+        content: Text(
+            'Estimated refund: ₹$refund\nRetained amount: ₹$retained\n\nNo extra gateway fee is deducted. The server checks the final amount and eligible refunds are reviewed by finance.'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
@@ -4444,11 +4476,11 @@ class _BookingDetailsScreenState extends State<BookingDetailsScreen> {
             onPressed: () => _directions(context),
             icon: const Icon(Icons.directions),
             label: const Text('Directions to pitstop')),
-        if (_booking.status == 'pending')
+        if (_booking.status == 'pending' || _booking.status == 'confirmed')
           FilledButton.tonalIcon(
               onPressed: _busy ? null : _cancel,
               icon: const Icon(Icons.cancel_outlined),
-              label: Text(_busy ? 'Cancelling…' : 'Cancel pending booking')),
+              label: Text(_busy ? 'Cancelling…' : 'Cancel booking')),
         if (_booking.status == 'confirmed' ||
             _booking.status == 'completed' ||
             _booking.status == 'cancelled')

@@ -138,6 +138,18 @@ async def get_booking(
     return success(booking)
 
 
+@router.get("/{booking_id}/cancellation-quote")
+async def booking_cancellation_quote(
+    booking_id: UUID,
+    user: CurrentUser,
+    database: DatabaseDependency,
+) -> dict[str, Any]:
+    quote = await database.booking_cancellation_quote(user.id, booking_id)
+    if quote is None:
+        raise ApiError(404, "BOOKING_NOT_FOUND", "Booking was not found")
+    return success(quote, "Cancellation estimate calculated")
+
+
 @router.post("/{booking_id}/cancel")
 async def cancel_booking(
     booking_id: UUID,
@@ -147,7 +159,8 @@ async def cancel_booking(
     booking = await database.cancel_booking(user.id, booking_id)
     if booking is None:
         raise ApiError(404, "BOOKING_NOT_FOUND", "Booking was not found")
-    return success(booking, "Booking cancelled")
+    message = "Booking cancelled; eligible refund awaits finance review" if booking.get("refund_amount_inr", 0) else "Booking cancelled"
+    return success(booking, message)
 
 
 
