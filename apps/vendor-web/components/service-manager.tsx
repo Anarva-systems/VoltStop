@@ -9,6 +9,9 @@ const serviceTypes = [
   ["food", "Food"], ["charging", "AC Slow Charging"], ["sleep_and_charge", "Sleep & Charge"],
   ["room", "Room"], ["parking", "Parking"], ["rest_area", "Rest Area"], ["combo", "Combo Package"],
 ];
+const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function stringValue(value: unknown) { return typeof value === "string" ? value : ""; }
 
 export function ServiceManager({ pricingOnly = false }: { pricingOnly?: boolean }) {
   const token = useAccessToken();
@@ -21,9 +24,21 @@ export function ServiceManager({ pricingOnly = false }: { pricingOnly?: boolean 
     event.preventDefault();
     if (!token || !dialog) return;
     const form = new FormData(event.currentTarget);
-    let availability: Record<string, unknown> = {};
-    try { availability = JSON.parse(String(form.get("availability") || "{}")) as Record<string, unknown>; }
-    catch { toast("Availability must be valid JSON, for example {\"days\":[\"Mon\",\"Tue\"]}"); return; }
+    const previousAvailability = dialog === "new" ? {} : dialog.availability ?? {};
+    const days = form.getAll("availability_days").map(String);
+    const open = String(form.get("availability_open") ?? "");
+    const close = String(form.get("availability_close") ?? "");
+    if (Boolean(open) !== Boolean(close)) {
+      toast("Add both opening and closing times, or leave both blank");
+      return;
+    }
+    const availability: Record<string, unknown> = { ...previousAvailability };
+    delete availability.days;
+    delete availability.open;
+    delete availability.close;
+    if (days.length) availability.days = days;
+    if (open) availability.open = open;
+    if (close) availability.close = close;
     const value = {
       service_type: String(form.get("service_type")),
       display_name: String(form.get("display_name")).trim(),
@@ -79,13 +94,18 @@ export function ServiceManager({ pricingOnly = false }: { pricingOnly?: boolean 
     {pricingOnly && <p className="label-note" style={{ marginTop: 17 }}>This service pricing report shows listed prices; commission and settlement estimates use verified payment records.</p>}
     {dialog && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setDialog(null)}><div className="modal-card"><div className="modal-head"><div><h2>{dialog === "new" ? "Add a service" : "Edit service"}</h2><p>This service catalogue is used by driver discovery and vendor booking slots.</p></div><button className="close-button" onClick={() => setDialog(null)}><Icon name="close"/></button></div>
       <form onSubmit={saveService}><div className="form-grid">
-        <label className="label-control form-span-2">Service name<input required name="display_name" className="input-control" placeholder="AC Slow Charging" defaultValue={dialog === "new" ? "" : dialog.display_name ?? ""}/></label>
+        <label className="label-control form-span-2">Service name<input required name="display_name" className="input-control" placeholder="e.g. AC charging, breakfast, standard room" defaultValue={dialog === "new" ? "" : dialog.display_name ?? ""}/></label>
         <label className="label-control">Service type<select name="service_type" className="select-control" defaultValue={dialog === "new" ? "charging" : dialog.service_type}>{serviceTypes.map(([value,name]) => <option value={value} key={value}>{name}</option>)}</select></label>
-        <label className="label-control">Price · INR<input required min="0" step="0.01" name="price_inr" type="number" className="input-control" defaultValue={dialog === "new" ? "" : dialog.price_inr}/></label>
-        <label className="label-control">Capacity per service<input min="1" name="capacity" type="number" className="input-control" placeholder="Managed by slots if blank" defaultValue={dialog === "new" ? "" : dialog.capacity ?? ""}/></label>
+        <label className="label-control">Price per booking · INR<input required min="0" step="0.01" name="price_inr" type="number" className="input-control" placeholder="0.00" defaultValue={dialog === "new" ? "" : dialog.price_inr}/></label>
+        <label className="label-control">Capacity per time slot<input min="1" name="capacity" type="number" className="input-control" placeholder="Leave blank to manage in Availability" defaultValue={dialog === "new" ? "" : dialog.capacity ?? ""}/></label>
         <label className="checkbox-line" style={{ alignSelf: "end", minHeight: 41 }}><input name="is_active" type="checkbox" defaultChecked={dialog === "new" ? true : dialog.is_active}/>Available to drivers</label>
         <label className="label-control form-span-2">Description<textarea name="description" className="textarea-control" placeholder="What is included in this service?" defaultValue={dialog === "new" ? "" : dialog.description ?? ""}/></label>
-        <label className="label-control form-span-2">Availability details <span className="label-note">Optional JSON used to describe service hours, e.g. {'{"days":["Mon","Tue"],"open":"08:00","close":"22:00"}'}</span><textarea name="availability" className="textarea-control" defaultValue={dialog === "new" ? "{}" : JSON.stringify(dialog.availability ?? {}, null, 2)}/></label>
+        <fieldset className="service-hours form-span-2"><legend>Opening hours <span className="label-note">Optional · leave blank if this service has no fixed hours</span></legend>
+          <span className="label-note">Days available</span>
+          <div className="service-days">{weekdays.map((day) => <label className="service-day" key={day}><input name="availability_days" type="checkbox" value={day} defaultChecked={dialog !== "new" && Array.isArray(dialog.availability?.days) && dialog.availability.days.includes(day)}/>{day}</label>)}</div>
+          <div className="service-hours-times"><label className="label-control">Opens at<input className="input-control" name="availability_open" type="time" defaultValue={dialog === "new" ? "" : stringValue(dialog.availability.open)}/></label><label className="label-control">Closes at<input className="input-control" name="availability_close" type="time" defaultValue={dialog === "new" ? "" : stringValue(dialog.availability.close)}/></label></div>
+          <span className="label-note">These hours help drivers know when to visit. Manage bookable time slots in Availability.</span>
+        </fieldset>
       </div><div className="form-actions"><Button type="button" variant="secondary" onClick={() => setDialog(null)}>Cancel</Button><Button disabled={busy !== ""}>{busy ? "Saving…" : dialog === "new" ? "Add service" : "Save changes"}</Button></div></form></div></div>}
   </>;
 }

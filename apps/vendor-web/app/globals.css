@@ -357,6 +357,15 @@ body { background:var(--bg); color:var(--text); }
 .modal-head h2 { color:#1d2c22; }
 .modal-head p,.checkbox-line { color:#59685f; }
 .close-button { border-color:#dce5df; background:#f7f9f7; color:#526258; }
+.service-hours { display:grid; gap:10px; min-width:0; margin:0; padding:14px; border:1px solid #d6e0d9; border-radius:12px; }
+.service-hours legend { padding:0 5px; color:#33463a; font-size:12px; font-weight:700; }
+.service-hours legend .label-note { margin-left:5px; font-weight:450; }
+.service-days { display:flex; flex-wrap:wrap; gap:7px; }
+.service-day { display:flex; align-items:center; gap:6px; min-height:34px; padding:0 10px; border:1px solid #dce5df; border-radius:999px; background:#f8faf8; color:#46564b; font-size:11px; cursor:pointer; }
+.service-day:has(input:checked) { border-color:#b9ddc4; background:#eff8f1; color:#21683b; }
+.service-day input { accent-color:#187b43; }
+.service-hours-times { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+@media(max-width:650px) { .service-hours-times { grid-template-columns:1fr; } }
 @media (prefers-reduced-motion: reduce) { *,*::before,*::after { scroll-behavior:auto !important; animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; } }
 .auth-password-field { position:relative; display:block; }
 .auth-password-field input { padding-right:68px; }
