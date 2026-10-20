@@ -6,5 +6,13 @@ export interface ApiSuccess<T> {
 
 export interface ApiFailure {
   success: false;
-  error: { code: string; message: string };
+  error: {
+    code: string;
+    message: string;
+    details?: Array<{
+      loc?: Array<string | number>;
+      msg?: string;
+      type?: string;
+    }>;
+  };
 }
