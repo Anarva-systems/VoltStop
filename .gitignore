@@ -43,3 +43,16 @@ supabase/.branches/
 supabase/migrations/.*.tmp
 .vercel
 .env*
+
+# Local-only staging smoke-test credentials, state, and machine-specific tooling.
+# These reference this machine's paths, password files, and live test-account
+# tokens; keep them out of the repository and regenerate via the staging project.
+scripts/*.bin
+scripts/staging_smoke_flow.py
+scripts/staging_smoke_users.py
+scripts/staging_smoke_state.json
+scripts/staging_smoke_users.json
+scripts/rzp_checkout.html
+scripts/read-cred*.ps1
+scripts/enum-creds.ps1
+scripts/node-pptr/

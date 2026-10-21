@@ -1,0 +1,32 @@
+name: Web checks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/vendor-web/**"
+      - ".github/workflows/web-checks.yml"
+  pull_request:
+    paths:
+      - "apps/vendor-web/**"
+      - ".github/workflows/web-checks.yml"
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/vendor-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/vendor-web/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Type-check
+        run: npm run lint
+      - name: Supabase config tests
+        run: npm run test:supabase-config
