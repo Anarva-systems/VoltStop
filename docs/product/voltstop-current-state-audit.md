@@ -15,19 +15,19 @@
 
 ## 1. Executive summary
 
-VoltStop is a functional, unusually well-engineered booking platform for an NH-16 EV travel corridor. The backend is the strongest layer: 100+ endpoints with role/ownership checks, atomic capacity allocation, webhook-authoritative payment capture, cancellation policy snapshots, and a 157-test suite (153 pass, 3 skipped integration probes, 1 failing — root cause identified). The database has 37 tables, all RLS-enabled, with a deliberate index strategy. The mobile app (Android-only) and the web portal/admin are fully wired to real APIs with no mock data anywhere. Staging was genuinely verified end-to-end: vendor onboarding → approval → slot → booking → Razorpay test payment → capture.
+VoltStop is a functional, unusually well-engineered booking platform for an NH-16 EV travel corridor. The backend is the strongest layer: 100+ endpoints with role/ownership checks, atomic capacity allocation, webhook-authoritative payment capture, cancellation policy snapshots, and a 168-test suite (168 pass, 3 skipped integration probes, 0 failing as of 2026-10-21 — Batch 0 fixes landed). The database has 37 tables, all RLS-enabled, with a deliberate index strategy. The mobile app (Android-only) and the web portal/admin are fully wired to real APIs with no mock data anywhere. Staging was genuinely verified end-to-end: vendor onboarding → approval → slot → booking → Razorpay test payment → capture.
 
-The platform is not "premium-complete" yet. The recurring themes are: **(a)** reliability edge cases in the money path (pending-booking expiry, booking idempotency, one-active-refund guarantee), **(b)** one real schema drift bug (hotel operating-hours columns missing from migrations), **(c)** missing growth features (reviews, favourites, push notifications, offers), **(d)** missing operations infrastructure (no CI, no rate limiting, no security headers, no verified webhook delivery, no production deployment evidence), and **(e)** UX polish gaps (no shared design system, weak focus states, dead screens).
+The platform is not "premium-complete" yet. The recurring themes are: **(a)** reliability edge cases in the money path — **fixed in Batch 0** (pending-booking expiry, booking idempotency + reconciliation state, one-active-refund guarantee), **(b)** one real schema drift bug (hotel operating-hours columns missing from migrations) — **fixed in Batch 0**, **(c)** missing growth features (reviews, favourites, push notifications, offers), **(d)** missing operations infrastructure — **Batch 0 added CI, rate limiting, security headers**; verified webhook delivery and production deployment evidence remain open, and **(e)** UX polish gaps (no shared design system, weak focus states, dead screens).
 
 **Headline numbers**
 
 | Layer | Size | Test status (this session) |
 |---|---|---|
-| Backend API | ~15 routers, 100+ endpoints | 153 passed / 1 failed / 3 skipped (pytest) |
-| Database | 15 migrations, 37 tables, 20 functions, 24 triggers | Applied on staging; production ledger unknown |
-| Mobile | 20+ screens, ~49 Dart tests | Not runnable (Flutter CLI absent); passed 2026-10-11 per docs |
-| Web (vendor + admin) | 46 routes | 13/13 node:test pass; no jest/playwright |
-| CI/CD | none | 4 |
+| Backend API | ~15 routers, 100+ endpoints | 168 passed / 0 failed / 3 skipped (pytest) |
+| Database | 18 migrations, 37 tables, 20 functions, 24 triggers | 18/18 applied on staging (verified via `schema_migrations`); production ledger unknown |
+| Mobile | 20+ screens, ~49 Dart tests | Not runnable locally (Flutter CLI absent); CI workflow added, first run pending |
+| Web (vendor + admin) | 46 routes | 13/13 node:test pass; `tsc --noEmit` clean; no jest/playwright |
+| CI/CD | 3 GitHub Actions workflows (backend/web/mobile) | Added in Batch 0; not yet exercised on GitHub runners |
 
 ---
 
@@ -76,7 +76,7 @@ No endpoint documented in `docs/api.md` is missing from source; `api.md` predate
 - **Roles**: customers have no role claim — ownership is enforced by `user_id` in SQL. Vendors resolved via `vendors.owner_id`. Admins are DB rows (`admin_users` + `admin_role_permissions`); `require_permission(p)` is a frozenset check (`app/admin/auth.py:46-51`). 31 permissions, 5 roles, SUPER_ADMIN bootstrap + last-admin/self-disable protections.
 - **Org boundaries**: owner-scoped SQL verified across bookings, vendors, slots, support, disputes, checkout verify (`user_owns_payment_order` across all three payment tables), driver trips. Cross-tenant access returns 403/404, not data.
 - **Gaps**:
-  1. `POST /bookings` has **no Idempotency-Key** and no DB unique guard on (user, slot) — concurrent duplicates possible if the Redis lock elapses (`app/bookings/router.py:73-107`). *(hotels/restaurants/vehicles/trips/disputes/support all have idempotency keys; charging bookings are the exception)*
+  1. ~~`POST /bookings` has **no Idempotency-Key** and no DB unique guard on (user, slot) — concurrent duplicates possible if the Redis lock elapses.~~ **Fixed 2026-10-21 (Batch 0.5):** server-derived idempotency key from the single-use lock token, request-fingerprint validation (mismatch → 409 `IDEMPOTENCY_KEY_REUSED`), `unique(user_id, idempotency_key)` DB guard, advisory-lock serialization, and replay returning the existing booking. *(hotels/restaurants/vehicles/trips/disputes/support all have idempotency keys; charging bookings are the exception)*
   2. Multi-vendor accounts: `_vendor_id` silently picks the first vendor (`app/vendors/portal_router.py:26-30`) — latent ambiguity, not cross-tenant exploitable.
   3. Admin RLS (`is_platform_admin()` JWT claim) and API RBAC (`admin_users`) are two parallel systems kept in sync manually.
 
@@ -86,10 +86,11 @@ No endpoint documented in `docs/api.md` is missing from source; `api.md` predate
 2. **Create**: lock ownership verified with `secrets.compare_digest`; Razorpay order created server-side; then `create_pending_booking` in one transaction: `SELECT ... FOR UPDATE OF cs` on the slot, vendor verified/active, server price == client price, active-booking count vs capacity, slot flips to `booked` when full (`app/core/database.py:1217-1278`). **Overbooking is guarded at SQL level.**
 3. **Capture**: webhook and checkout-verify converge on `process_payment_webhook` (`database.py:1462-1567`): row locks in consistent order, order/payment pairing + currency + exact paise amount re-verified, `UniqueViolationError` on `razorpay_payment_id` as final race guard. Captured → booking `pending→confirmed`; failed → `expired` + capacity release.
 4. **State machine**: `pending → confirmed | expired | cancelled`; `confirmed → completed` (vendor accept→complete, requires webhook-verified capture). Vendor acknowledgement tracked separately.
-5. **Gaps**:
-   - **No pending-booking expiry sweep for charging bookings** — an abandoned checkout holds capacity until a failed-payment webhook or manual cancel. (Hotels have a lazy `_expire_pending` sweep, `hotels/repository.py:50-70`; restaurants expire lazily too.)
-   - No `reconciliation_required` state when Razorpay order creation times out mid-request (hotels/restaurants have it; charging does not).
-   - No idempotency key (§3.2).
+5. **Gaps — all fixed in Batch 0 (2026-10-21)**:
+   - ~~No pending-booking expiry sweep for charging bookings~~ → lazy `_expire_pending_bookings` sweep (`for update skip locked`) runs on every booking path; stale `pending` holds expire, slot capacity releases, `booking_events.expired` recorded. `hold_expires_at` set from the lock TTL at creation.
+   - ~~No `reconciliation_required` state when Razorpay order creation times out mid-request~~ → payments now carry `order_state` (`creating → ready / reconciliation_required`); gateway failures mark reconciliation and replays return 503 `PAYMENT_RECONCILIATION_REQUIRED` instead of double-charging.
+   - ~~No idempotency key~~ → see §3.2.
+   - Late capture handling added: a captured payment for an expired/cancelled booking creates a finance-review refund (`late-capture:{booking_id}`) instead of confirming a dead booking.
 
 ### 3.4 Payments — class 1 verified on staging, refunds class 2
 
@@ -98,7 +99,7 @@ No endpoint documented in `docs/api.md` is missing from source; `api.md` predate
 - Checkout verify: client signature check (key secret) → ownership → live provider fetch → same capture path. Client callbacks are never trusted alone.
 - Uncertain refund submissions held in `processing` with `provider_status=response_unknown`, requiring manual reconciliation (`app/admin/refund_service.py:40-48`). No background reconciler.
 - Staging evidence: order → checkout → signature verify → captured, booking `confirmed`, `amount_paid=50.00` (phase-30 smoke). **Webhook delivery itself is unverified anywhere** — `RAZORPAY_WEBHOOK_SECRET` is intentionally unset in staging; production unknown.
-- Gap: no DB constraint enforcing one-active-refund-per-payment (API checks in queries; concurrent approvals could race).
+- Gap: ~~no DB constraint enforcing one-active-refund-per-payment (API checks in queries; concurrent approvals could race)~~ → **Fixed 2026-10-21 (Batch 0.6):** partial unique indexes `refunds_payment_open_idx` / `hotel_refunds_payment_open_idx` on `(payment_id) where status not in ('failed','rejected')` — DB-level invariant, fail-loud on violating data (documented in migration `202610210002`).
 
 ### 3.5 Cancellation & refunds — class 1 (charging/hotel), gaps elsewhere
 
@@ -123,8 +124,8 @@ No endpoint documented in `docs/api.md` is missing from source; `api.md` predate
 
 ### 3.7 Ops & security
 
-- **Rate limiting: none** (class 4) — no limiter on auth-verify, webhook, or public endpoints.
-- **Security headers: none** (class 4) — no HSTS, X-Content-Type-Options, etc. CORS is a strict explicit allowlist with `allow_credentials=False` (class 1).
+- **Rate limiting: added 2026-10-21 (Batch 0.7)** — new `app/core/rate_limit.py`: Redis Lua fixed-window with in-process fallback, fail-open on Redis errors. Applied to `/auth/verify` (30/min), booking lock (20/min) + create (10/min), `/vendors/nearby` (60/min), webhook (300/5min), per user/IP; keys namespaced by `redis_key_prefix`.
+- **Security headers: added 2026-10-21 (Batch 0.8)** — pure-ASGI middleware inside the CORS wrapper: nosniff, frame-DENY, no-referrer, permissions policy; HSTS only over HTTPS. CORS remains a strict explicit allowlist with `allow_credentials=False` (class 1).
 - **Input validation**: strong — Pydantic `extra="forbid"`, field constraints, tz-aware datetime requirements on admin filters (class 1).
 - **Logging**: clean — no tokens/PII in logs, error codes only, bounded request metadata for audit (class 1).
 - **Config**: fail-closed environment validation — staging/prod require explicit HTTPS Supabase, `.supabase.co`/pooler DB with credentials, `rediss://` Redis with password, Razorpay key-prefix/mode match, prod requires webhook secret ≥32 chars (class 1).
@@ -145,14 +146,14 @@ No endpoint documented in `docs/api.md` is missing from source; `api.md` predate
 
 ### 4.1 Overview
 
-- **15 migrations** (202610020001 → 202610200001), additive, re-runnable; three safe check-constraint replacements; no table/column drops. 37 tables, **all with RLS enabled**; 20 functions, 24 triggers; no views; no native enums (all `text` + CHECK).
+- **18 migrations** (202610020001 → 202610210003), additive, re-runnable; three safe check-constraint replacements; no table/column drops. 37 tables, **all with RLS enabled**; 20 functions, 24 triggers; no views; no native enums (all `text` + CHECK). Batch 0 added three migrations (2026-10-21): hotel room-type operating hours (0.1), refund integrity indexes (0.3/0.7), booking reliability columns (`hold_expires_at`, `idempotency_key`, `request_fingerprint`, `payments.order_state`) with expiry index (0.4/0.5/0.6). All 18 applied to staging (verified via `supabase_migrations.schema_migrations` and `pg_indexes`).
 - Seed data: admin roles/permissions matrix (5 roles, 31 permissions), commission settings (500 bps), demo corridor (dev seed only).
 
 ### 4.2 Indexes — good coverage, four gaps
 
 Every API hot-path predicate has an index (bookings user/vendor/slot, payments razorpay ids, refunds, disputes, support, hotels, restaurants, driver trips). **Missing (prioritized):**
 
-1. **`refunds.payment_id` — HIGH** — every cancellation, refund approval and refund webhook filters/sums by `payment_id`; grows linearly with refund volume.
+1. ~~**`refunds.payment_id` — HIGH** — every cancellation, refund approval and refund webhook filters/sums by `payment_id`; grows linearly with refund volume.~~ **Fixed 2026-10-21:** partial unique indexes on `refunds(payment_id)` and `hotel_refunds(payment_id)` for non-terminal statuses (migration `202610210002`, applied to staging).
 2. **`bookings.payment_id` — MEDIUM** — `UNIQUE(id, payment_id)` has `id` leading; webhook payment lookups and the deferrable FK are unindexed.
 3. `support_tickets.assigned_to` — MEDIUM (per-agent queues).
 4. `restaurant_order_items.item_id`, `notifications.booking_id`, `admin_audit_logs.admin_user_id` — LOW (FK integrity scans).
@@ -164,16 +165,18 @@ Every API hot-path predicate has an index (bookings user/vendor/slot, payments r
 - Defense-in-depth triggers: owner cannot self-verify/activate; non-admin cannot release locked slots or cut capacity below active bookings; audit log, dispute events, support history immutable.
 - Nuance: bookings/payments/notifications have table-level write grants to `authenticated` with no matching non-admin write policies — dead surface area (RLS default-deny keeps it safe).
 
-### 4.4 Schema drift bug — class 3 (breaking)
+### 4.4 Schema drift bug — class 3 (breaking) — FIXED 2026-10-21
 
-**`hotels/repository.py` and `hotels/schemas.py` reference `hotel_room_types.is_open_24_hours`, `operating_start_time`, `operating_end_time` — but NO migration creates these columns** (grep across all 15 migrations: zero hits). Any create/patch/search room-type call against staging or production will raise undefined-column errors. The vendor web hotel-management UI exposes these fields. **This is the single most concrete bug found in the audit** and must be fixed with a migration (or the fields removed from the API) before hotel management can work.
+~~**`hotels/repository.py` and `hotels/schemas.py` reference `hotel_room_types.is_open_24_hours`, `operating_start_time`, `operating_end_time` — but NO migration creates these columns** (grep across all 15 migrations: zero hits). Any create/patch/search room-type call against staging or production will raise undefined-column errors. The vendor web hotel-management UI exposes these fields. **This is the single most concrete bug found in the audit** and must be fixed with a migration (or the fields removed from the API) before hotel management can work.~~
+
+**Resolved:** migration `202610210001_hotel_room_operating_hours.sql` adds the three columns (`add column if not exists`, defaults `true` / `'00:00'` / `'23:59'`) plus a check constraint (`is_open_24_hours or operating_start_time <> operating_end_time`). Additive, fail-loud, applied to staging. Regression test asserts the migration stays additive.
 
 ### 4.5 Other schema notes
 
 - Charging inventory is computed (capacity minus active bookings) under `FOR UPDATE` — correct and atomic.
 - Hotel inventory is per-night rows with `rooms_available <= room_capacity` CHECK, decremented in-transaction with row locks.
 - `set_updated_at` triggers missing on hotel (6), restaurant (6), and `driver_vehicles` tables — API writes `updated_at` manually (works today, API-dependent).
-- No partial-unique "one active refund per payment" constraint (API enforces in queries; race possible on concurrent approvals).
+- ~~No partial-unique "one active refund per payment" constraint (API enforces in queries; race possible on concurrent approvals).~~ **Fixed 2026-10-21:** `refunds_payment_open_idx` / `hotel_refunds_payment_open_idx` (migration `202610210002`).
 - Service-type vocabulary duplicated across `vendor_services.service_type` (6 values), `charging_slots.service_type` (7 values), and API constants — drift risk.
 
 ---

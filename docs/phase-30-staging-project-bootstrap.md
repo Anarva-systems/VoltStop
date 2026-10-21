@@ -34,6 +34,15 @@ The full database linter reports issues in bundled PostGIS-owned extension routi
 - Booking is `confirmed` with `payment_status=captured` and `amount_paid=50.00`, visible to both the customer and the vendor.
 - The staging website renders and is wired to the staging API.
 
+## Batch 0 verification on staging (2026-10-21)
+
+- Three additive migrations applied to the staging database via `supabase migration up` (18/18 recorded; new columns and indexes verified through `schema_migrations`/`pg_indexes`).
+- Staging API redeployed from local code via the Vercel CLI (root-linked `.vercel` + root `.vercelignore`; the GitHub remote is NOT involved, so no production auto-deploy risk). Latest deployment `voltstop-staging-debyfme7q`.
+- Live smoke results: vendor slot creation → customer lock → booking create returned a real Razorpay test order with status `pending`; concurrent duplicate create was absorbed by idempotency (fail-safe 503, no duplicate booking); both abandoned `pending` bookings auto-expired via the new sweep and their slots returned to `available`; `/auth/verify` returned 429 on request 31 of a burst (30/min limit).
+- Security headers verified live on staging responses (nosniff, frame-DENY, referrer-policy, permissions-policy; HSTS over HTTPS).
+- One live 500 was caught and fixed during this pass: asyncpg rejected an int for `($n::text || ' seconds')::interval`; replaced with a native `$n::interval` + `timedelta` parameter (168/168 backend tests still green).
+- Local credential hygiene: smoke credentials/token files are gitignored; verified via `git log --all` and `git ls-tree origin/main` that no credential-bearing file ever reached the repo or remote. The staging DB password (local temp files) was already rotated once; any long-lived Supabase token that existed in the local `scripts/supabase-token.bin` should be revoked in the dashboard as a precaution.
+
 ## Remaining staging work
 
 - Configure a staging Razorpay webhook endpoint, set `RAZORPAY_WEBHOOK_SECRET` in the staging API environment, and re-run the readiness probe with `-RequireWebhook`.

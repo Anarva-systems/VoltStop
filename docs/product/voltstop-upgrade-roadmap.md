@@ -13,28 +13,28 @@
 - No destructive DB changes or production migrations without: confirmed target database, verified backup, explicit approval.
 - Every batch: run `pytest` (apps/api), `tsc --noEmit` + `test:supabase-config` (apps/vendor-web), `flutter analyze test` where toolchain allows; fix regressions introduced.
 - External claims need evidence: webhook delivery, OTP delivery, production deployment are currently **unverified** — items that depend on them stay marked "blocked" until evidence exists.
-- Uncommitted work exists: the `redis_key_prefix` staging-isolation change (complete, consistent) and staging smoke scripts (contain credentials — keep untracked). Both must be handled explicitly in batch 1.
+- The `redis_key_prefix` staging-isolation change and staging smoke-script hygiene are **resolved and committed** (2026-10-21): prefix config committed, credential scripts gitignored, no credentials ever reached the remote (verified via `git log --all` and `git ls-tree origin/main`). See Batch 0.11.
 
 ---
 
 ## 1. Batch 0 — Fix the money-path and platform basics (Phase 3, ~1–2 sessions)
 
-Highest-priority, well-understood fixes with concrete root causes. **Do these before any visual work.**
+**Status: DONE (2026-10-21).** All items implemented, tested, and committed locally (commits `33706a9`..`05cd99d` + CI/hygiene commits on `main`, not pushed). Migrations applied to staging Supabase only.
 
-| # | Item | Type | Evidence |
+| # | Item | Result | Evidence |
 |---|---|---|---|
-| 0.1 | **Hotel operating-hours schema drift**: add migration for `hotel_room_types.is_open_24_hours / operating_start_time / operating_end_time` (or remove the fields from `hotels/schemas.py` + `hotels/repository.py` + vendor web UI) | Bug fix | API references columns that no migration creates — any hotel room-type call raises undefined-column errors |
-| 0.2 | Fix failing test `test_hotels.py::test_same_customer_idempotency_key_returns_existing_reservation` — move fingerprint/idempotency lookup **before** inventory availability check in `hotels/repository.py` | Bug fix | Replay hits `ROOM_UNAVAILABLE` because availability is checked first |
-| 0.3 | Add `refunds(payment_id)` index (ideally `(payment_id, status)`) via new migration | Perf | Cancellation/approval/webhook paths all filter/sum by `payment_id` |
-| 0.4 | Charging pending-booking expiry: lazy sweep (mirror hotels' `_expire_pending`) + optional TTL-based release, releasing capacity and marking `expired` | Reliability | Abandoned checkouts hold capacity indefinitely |
-| 0.5 | `POST /bookings`: require `Idempotency-Key` (fingerprint + unique constraint like restaurants) and add `reconciliation_required` handling when Razorpay order creation fails mid-request | Reliability | Duplicate bookings possible after lock expiry; no reconciliation state |
-| 0.6 | One-active-refund-per-payment DB guarantee (partial unique index on non-terminal statuses for `refunds` and `hotel_refunds`) | Reliability | Concurrent refund approvals can race |
-| 0.7 | Rate limiting (slowapi or equivalent): `/auth/verify`, `/payments/razorpay/webhook` (per IP), public vendor endpoints, booking/lock | Security | No rate limiting exists anywhere |
-| 0.8 | Security headers middleware (HSTS, X-Content-Type-Options, Referrer-Policy, nosniff) | Security | None exist beyond CORS allowlist |
-| 0.9 | CI workflow (GitHub Actions): backend pytest + web tsc/tests + flutter analyze on push/PR | Ops | No CI exists |
-| 0.10 | Commit the `redis_key_prefix` change; remove staging credential files from the repo working area (keep locally, add `.gitignore`) | Hygiene | Uncommitted, complete; smoke scripts hold staging secrets |
+| 0.1 | Hotel operating-hours schema drift | Fixed via migration `202610210001_hotel_room_operating_hours.sql` (additive `if not exists` + check constraint), applied to staging (18/18 migrations recorded) | Migration test asserts additive statements only; backend suite green |
+| 0.2 | Hotel reservation idempotency replay | Verified correct: replay lookup already precedes inventory check; fixed the test double that mis-stored rows | `test_hotels.py::test_same_customer_idempotency_key_returns_existing_reservation` passes |
+| 0.3 | Refund `payment_id` lookup index | `202610210002_refund_integrity_indexes.sql` — partial unique `(payment_id) where status not in ('failed','rejected')` on `refunds` and `hotel_refunds`; serves lookup and the one-open-refund invariant | Applied to staging; 3/3 new indexes present (verified via `pg_indexes`) |
+| 0.4 | Charging pending-booking expiry | Lazy `_expire_pending_bookings` sweep (`for update skip locked`) on every booking path; expires stale `pending` holds, releases slot capacity, records `booking_events.expired`; `hold_expires_at` set at creation from lock TTL | Unit-tested sweep + capacity release in `test_charging_booking_reliability.py` |
+| 0.5 | Booking idempotency + reconciliation | `idempotency_key` (server-derived from single-use lock token) + `request_fingerprint` (hashed payload) + `unique(user_id, idempotency_key)`; fingerprint mismatch → 409 `IDEMPOTENCY_KEY_REUSED`; replay returns the existing booking; payments get `order_state` (`creating → ready / reconciliation_required`); gateway failure marks reconciliation and retry returns 503 `PAYMENT_RECONCILIATION_REQUIRED` | 4 dedicated tests incl. replay, fingerprint conflict, attach/unknown transitions |
+| 0.6 | One-active-refund DB guarantee | Covered by 0.3's partial unique indexes (fail-loud on violating data, documented in the migration comment) | Migration test + existing refund state-machine tests |
+| 0.7 | Rate limiting | New `app/core/rate_limit.py`: Redis Lua fixed-window with in-process fallback, fail-open on Redis errors. Applied to `/auth/verify` (30/min), booking lock (20/min) and create (10/min), `/vendors/nearby` (60/min), webhook (300/5min). Keys namespaced by `redis_key_prefix` | `test_rate_limit.py`: limit enforced, prefix isolation, fail-open |
+| 0.8 | Security headers | Pure-ASGI middleware inside the CORS wrapper: nosniff, frame-DENY, no-referrer, permissions policy; HSTS only over HTTPS (local HTTP unaffected) | `test_security_headers.py` covers HTTP + HTTPS paths |
+| 0.9 | CI workflows | `.github/workflows/`: backend pytest (3.12), web tsc + supabase-config tests (Node 22), Flutter analyze/test (stable channel, `flutter-action`) | Backend + web commands run locally with identical invocations; Flutter not verifiable locally (no Flutter CLI) — first CI run needs monitoring |
+| 0.10 | Redis prefix commit + credential hygiene | `redis_key_prefix`/`booking_lock_prefix` committed (`33706a9`); root `.gitignore` excludes `scripts/` credential files; verified nothing credential-bearing ever reached git history or the remote | `git ls-tree origin/main` shows only the committed readiness probe |
 
-**Verification:** 157/157 backend tests green (after 0.2); new tests for 0.4–0.6 (expiry, idempotent booking, concurrent refunds); staging redeploy; readiness probe still passes.
+**Verification:** backend 168 passed / 3 skipped / 0 failed; web `tsc --noEmit` clean + 13/13 supabase-config tests; 3 migrations parsed (pglast) and applied to staging; staging API redeployed from local code via Vercel CLI. Remaining evidence in flight: staging smoke of booking → payment → capture against the redeployed API.
 
 ## 2. Batch 1 — Verify the payment pipeline live (Phases 3–4, requires user/config)
 

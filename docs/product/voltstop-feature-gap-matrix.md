@@ -15,12 +15,12 @@ Status key: **1** implemented + verified · **2** implemented, incomplete · **3
 | Slot locking (Redis, 300s TTL) | 1 | — | 1 | — | — | 1 | `SET NX EX`, Lua compare-delete release; staging smoke | — |
 | Atomic capacity allocation (no overbooking) | 1 | 1 | — | — | — | 1 | `FOR UPDATE` + count + `booked` flip; test `test_api.py:1209-1248` | — |
 | Booking creation + server-priced Razorpay order | 1 | 1 | 1 | — | — | 1 | Staging capture verified end-to-end | — |
-| Booking idempotency key | 4 | 4 | — | — | — | 4 | `POST /bookings` has none (hotels/restaurants do) | **P0** |
-| Pending-booking auto-expiry (charging) | 4 | 4 | — | — | — | 4 | No sweep; abandoned checkout holds capacity (hotels have one) | **P0** |
-| Order-creation failure reconciliation state | 4 | — | — | — | — | 4 | Hotels/restaurants mark `reconciliation_required`; charging doesn't | P1 |
+| Booking idempotency key | 1 | 1 | — | — | — | 1 | **Fixed 2026-10-21:** server-derived key from single-use lock token + `unique(user_id, idempotency_key)`; fingerprint mismatch → 409; live concurrent-create race returned the fail-safe 503 (no duplicate) | — |
+| Pending-booking auto-expiry (charging) | 1 | 1 | — | — | — | 1 | **Fixed 2026-10-21:** lazy `for update skip locked` sweep on all booking paths; `hold_expires_at` from lock TTL | — |
+| Order-creation failure reconciliation state | 1 | 1 | — | — | — | 1 | **Fixed 2026-10-21:** `payments.order_state` `creating → ready / reconciliation_required`; gateway failure marks unknown; replay returns 503 | — |
 | Payment capture (webhook-authoritative) | 1 | 1 | — | — | — | 1 | 13 security tests incl. replay/concurrency | — |
 | Webhook delivery verified live | 2 | — | — | — | — | 5 | Secret unset in staging; never exercised against provider | **P0** (config) |
-| One-active-refund-per-payment guarantee | 2 | 4 | — | — | — | 2 | API query checks; no DB constraint; concurrent-approval race | P1 |
+| One-active-refund-per-payment guarantee | 1 | 1 | — | — | — | 1 | **Fixed 2026-10-21:** partial unique indexes `refunds_payment_open_idx` / `hotel_refunds_payment_open_idx` (fail-loud on violating data) | — |
 | Manual refund reconciliation state | 2 | — | — | — | 2 | 2 | `processing`/`response_unknown` held; no background reconciler | P2 |
 
 ## 2. Cancellation & refunds
@@ -44,7 +44,7 @@ Status key: **1** implemented + verified · **2** implemented, incomplete · **3
 |---|---|---|---|---|---|---|---|---|
 | Profile/listing editor (name/type/address/coords) | 1 | 1 | — | 1 | 1 | 1 | Leaflet map picker; staging smoke created real profile | — |
 | Photos management | 2 | 1 | — | 2 | — | 2 | Single `image_url` field only; no upload/gallery | P2 |
-| Operating hours | 2 | 2 | — | 2 | — | 2 | Profile free-text; structured per-service/room; **hotel room-type hour columns missing from DB (breaking)** | **P0** |
+| Operating hours | 2 | 2 | — | 2 | — | 2 | Profile free-text; structured per-service/room; **hotel room-type hour columns added by migration 202610210001 (2026-10-21, applied to staging)** | — |
 | Services catalogue + pricing | 1 | 1 | — | 1 | 1 | 1 | CRUD, active toggle, admin moderation | — |
 | Availability slots CRUD + capacity | 1 | 1 | — | 1 | 1 | 1 | Week calendar; guarded deletes; staging smoke | — |
 | Blackout dates | 4 | 4 | — | 4 | — | 4 | Workaround: close individual slots | P2 |
@@ -52,7 +52,7 @@ Status key: **1** implemented + verified · **2** implemented, incomplete · **3
 | Vendor cancellation | 4 | — | — | 4 | — | 4 | Explicitly not enabled | P1 |
 | Offers/promotions | 4 | 4 | 4 | 4 | — | 4 | No coupon/discount model anywhere | P3 |
 | Revenue reports | 1 | 1 | — | 1 | 1 | 2 | Real server report; payout estimate only; hardcoded "5%" copy | P2 |
-| Hotel room + inventory management | 2 | 2 | — | 2 | 2 | 2 | CRUD + dated inventory wired; **broken by schema drift** until fixed | **P0** |
+| Hotel room + inventory management | 1 | 1 | — | 2 | 2 | 2 | CRUD + dated inventory wired; **schema drift fixed 2026-10-21 (migration 202610210001 applied to staging)** | — |
 | Restaurant menu + order management | 1 | 1 | — | 1 | 1 | 2 | Status transitions payment-gated; no cancel | P1 |
 | Disputes/support/notifications | 1 | 1 | — | 1 | 1 | 1 | All wired with idempotency | — |
 
@@ -99,16 +99,16 @@ Status key: **1** implemented + verified · **2** implemented, incomplete · **3
 
 | Feature | Status | Evidence / notes | Priority |
 |---|---|---|---|
-| CI/CD pipeline | 4 | No GitHub Actions; manual pytest/tsc before deploys | **P0** |
-| Rate limiting | 4 | None on any endpoint (webhook, auth-verify included) | **P0** |
-| Security headers (HSTS etc.) | 4 | CORS allowlist only | P1 |
+| CI/CD pipeline | 2 | **Added 2026-10-21:** 3 GitHub Actions workflows (backend pytest, web tsc+tests, Flutter analyze/test); backend+web commands verified locally with identical invocations; first GitHub-runner execution pending (workflows not yet pushed) | — |
+| Rate limiting | 1 | **Added 2026-10-21:** Redis fixed-window (Lua) with in-process fallback, fail-open; auth-verify 30/min, booking lock 20/min + create 10/min, vendor discovery 60/min, webhook 300/5min; keys prefixed by `redis_key_prefix` | — |
+| Security headers (HSTS etc.) | 1 | **Added 2026-10-21:** ASGI middleware in CORS wrapper; nosniff/DENY/no-referrer/permissions-policy always, HSTS over HTTPS only; verified live on staging responses | — |
 | Webhook delivery verification | 5 | Secret unset staging; unknown production | **P0** (config) |
 | Production deployment | 5 | Deleted 2026-10-14; no live evidence; ledger unverified | **P0** (decision) |
 | Load/concurrency testing | 4 | None | P2 |
 | Alerting/runbooks | 4 | None | P2 |
 | Backup/restore drill | 4 | Supabase managed; no drill evidence | P2 |
-| Secrets hygiene | 3 | Prior exposure documented; untracked smoke scripts hold staging creds; rotation outstanding | **P0** |
-| Test coverage — backend | 1 | 153/157 pass; 1 fix identified | — |
+| Secrets hygiene | 2 | **2026-10-21:** credential-bearing smoke files gitignored; verified via `git log --all` + `git ls-tree origin/main` that none ever reached the repo or remote; staging-only creds (smoke users, DB password already rotated once, short-lived tokens). Remaining: revoke any long-lived Supabase token that may have existed in the local `supabase-token.bin` | P1 |
+| Test coverage — backend | 1 | 168 pass / 0 fail / 3 skipped (2026-10-21) | — |
 | Test coverage — web UI | 4 | No jest/playwright | P1 |
 | Test coverage — mobile | 2 | ~49 tests, previously green; Flutter CLI needed; stale goldens | P2 |
 | Accessibility | 2 | Uneven focus states, 8–10px admin text, no skip links | P1 |
