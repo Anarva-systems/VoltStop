@@ -1,6 +1,6 @@
 import json
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -1297,14 +1297,14 @@ class Database:
                          (id, user_id, vendor_id, slot_id, amount_paid, status,
                           hold_expires_at, idempotency_key, request_fingerprint)
                        values ($1, $2, $3, $4, 0, 'pending',
-                               now() + ($5::text || ' seconds')::interval, $6, $7)
+                               now() + $5::interval, $6, $7)
                        on conflict (user_id, idempotency_key) do nothing
                        returning id""",
                     booking_id,
                     user_id,
                     slot["vendor_id"],
                     slot_id,
-                    hold_expires_seconds,
+                    timedelta(seconds=hold_expires_seconds),
                     idempotency_key,
                     request_fingerprint,
                 )

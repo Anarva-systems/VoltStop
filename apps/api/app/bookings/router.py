@@ -137,6 +137,11 @@ async def create_booking(
                 "status": "pending",
             }
         else:
+            if booking.get("order_state") == "creating":
+                raise ApiError(
+                    503, "PAYMENT_ORDER_IN_FLIGHT",
+                    "This booking's payment order is still being prepared; check your bookings shortly",
+                )
             if booking.get("order_state") == "reconciliation_required" or not booking.get("razorpay_order_id"):
                 raise ApiError(
                     503, "PAYMENT_RECONCILIATION_REQUIRED",

@@ -50,6 +50,7 @@ supabase/migrations/.*.tmp
 scripts/*.bin
 scripts/staging_smoke_flow.py
 scripts/staging_smoke_users.py
+scripts/batch0_smoke*.py
 scripts/staging_smoke_state.json
 scripts/staging_smoke_users.json
 scripts/rzp_checkout.html
