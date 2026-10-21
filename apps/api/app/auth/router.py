@@ -8,6 +8,7 @@ from app.auth.dependencies import CurrentUser
 from app.auth.service import verify_supabase_access_token
 from app.core.config import Settings, get_settings
 from app.core.dependencies import get_http_client
+from app.core.rate_limit import rate_limit
 from app.core.responses import success
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -32,6 +33,7 @@ async def verify_token(
     payload: VerifyRequest,
     client: httpx.AsyncClient = Depends(get_http_client),
     settings: Settings = Depends(get_settings),
+    _limit: None = Depends(rate_limit("auth-verify", 30, 60)),
 ) -> dict[str, Any]:
     user = await verify_supabase_access_token(payload.access_token, client, settings)
     return success(public_user(user), "Access token is valid")

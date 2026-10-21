@@ -59,18 +59,27 @@ class FakePaymentConnection:
         }
         self.booking = {
             "id": self.booking_id,
+            "user_id": uuid4(),
             "payment_id": self.payment_id,
             "booking_status": "pending",
             "slot_id": self.slot_id,
+            "hold_expires_at": None,
         }
         self.booking_events = []
         self.refund_events = []
         self.refund_audit_events = []
+        self.late_capture_refunds = []
         self.duplicate_provider_payment_id = None
         self.lock = asyncio.Lock()
 
     def transaction(self):
         return FakeTransaction(self.lock)
+
+    async def fetch(self, query, *args):
+        normalized = " ".join(query.lower().split())
+        if "from public.bookings" in normalized and "hold_expires_at" in normalized:
+            return []
+        raise AssertionError(f"Unexpected fetch query: {normalized}")
 
     async def fetchrow(self, query, *args):
         normalized = " ".join(query.lower().split())
@@ -139,6 +148,9 @@ class FakePaymentConnection:
         if normalized.startswith("update public.payments set status='refunded'"):
             self.payment["payment_status"] = "refunded"
             return "UPDATE 1"
+        if normalized.startswith("insert into public.refunds(booking_id,payment_id,requested_by"):
+            self.late_capture_refunds.append(tuple(args))
+            return "INSERT 0 1"
         if normalized.startswith("update public.bookings set status='confirmed'"):
             self.booking["booking_status"] = "confirmed"
             return "UPDATE 1"
@@ -302,6 +314,36 @@ def test_late_capture_after_failure_is_recorded_without_reconfirming_expired_boo
     assert connection.payment["payment_status"] == "captured"
     assert connection.booking["booking_status"] == "expired"
     assert len(connection.booking_events) == len(after_failure[2]) + 1
+
+
+def test_capture_after_hold_expiry_creates_refund_instead_of_confirming():
+    from datetime import datetime, timedelta, timezone
+
+    database, connection = make_database()
+    connection.booking["hold_expires_at"] = datetime.now(timezone.utc) - timedelta(minutes=1)
+
+    assert run_webhook(database, connection.order_id, "pay_correct")
+
+    assert connection.payment["payment_status"] == "captured"
+    assert connection.booking["booking_status"] == "pending"
+    assert len(connection.late_capture_refunds) == 1
+    assert connection.late_capture_refunds[0][:3] == (
+        connection.booking_id, connection.payment_id, connection.booking["user_id"],
+    )
+    assert connection.late_capture_refunds[0][4] == "late-capture:" + str(connection.booking_id)
+    assert [event for _, event in connection.booking_events] == ["payment_success"]
+
+
+def test_capture_after_cancellation_creates_refund_instead_of_confirming():
+    database, connection = make_database()
+    connection.booking["booking_status"] = "cancelled"
+
+    assert run_webhook(database, connection.order_id, "pay_correct")
+
+    assert connection.payment["payment_status"] == "captured"
+    assert connection.booking["booking_status"] == "cancelled"
+    assert len(connection.late_capture_refunds) == 1
+    assert [event for _, event in connection.booking_events] == ["payment_success"]
 
 
 def test_refund_webhook_replay_does_not_duplicate_refund_audit_or_dispute_events():

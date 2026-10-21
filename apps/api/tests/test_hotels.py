@@ -66,10 +66,10 @@ class _InventoryConnection:
                     "vendor_active": True, "is_verified": True, "type": "hotel"}
         if "insert into public.hotel_reservations" in normalized:
             row = {"id": uuid4(), "customer_id": args[0], "vendor_id": args[1], "room_type_id": args[2],
-                    "check_in": args[3], "check_out": args[4], "guests": args[5], "rooms": args[6],
-                    "amount_inr": args[7], "free_cancellation_hours": args[8], "currency": "INR",
-                    "status": "payment_pending", "created_at": self.now, "request_fingerprint": args[10]}
-            self.reservations[(args[0], args[9])] = row
+                    "check_in": args[3], "check_out": args[4], "guests": args[7], "rooms": args[8],
+                    "amount_inr": args[9], "free_cancellation_hours": args[10], "currency": "INR",
+                    "status": "payment_pending", "created_at": self.now, "request_fingerprint": args[12]}
+            self.reservations[(args[0], args[11])] = row
             return row
         raise AssertionError(f"Unexpected fetchrow query: {normalized}")
     async def fetchval(self, query, *args):

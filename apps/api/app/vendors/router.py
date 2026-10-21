@@ -1,11 +1,12 @@
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
 
 from app.core.database_dependency import DatabaseDependency
 from app.core.errors import ApiError
+from app.core.rate_limit import rate_limit
 from app.core.responses import success
 
 router = APIRouter(prefix="/vendors", tags=["vendors"])
@@ -17,6 +18,7 @@ async def nearby_vendors(
     lat: float = Query(ge=-90, le=90),
     lng: float = Query(ge=-180, le=180),
     radius_km: float = Query(gt=0, le=200),
+    _limit: None = Depends(rate_limit("vendor-discovery", 60, 60)),
 ) -> dict[str, Any]:
     vendors = await database.nearby_vendors(lat, lng, radius_km)
     return success(vendors)

@@ -8,6 +8,7 @@ from app.auth.dependencies import CurrentUser
 from app.core.config import Settings, get_settings
 from app.core.database_dependency import DatabaseDependency
 from app.core.errors import ApiError
+from app.core.rate_limit import rate_limit
 from app.core.responses import success
 from app.payments.schemas import RazorpayCheckoutVerification
 from app.payments.service import RazorpayGateway, verify_checkout_signature, verify_webhook_signature
@@ -77,6 +78,7 @@ async def razorpay_webhook(
     request: Request,
     database: DatabaseDependency,
     settings: Settings = Depends(get_settings),
+    _limit: None = Depends(rate_limit("razorpay-webhook", 300, 300)),
 ) -> dict[str, Any]:
     raw_body = await request.body()
     signature = request.headers.get("X-Razorpay-Signature")

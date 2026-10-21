@@ -1,3 +1,5 @@
+import hashlib
+import json
 import secrets
 from decimal import Decimal
 from typing import Any
@@ -12,20 +14,20 @@ from app.core.config import Settings, get_settings
 from app.core.database_dependency import DatabaseDependency
 from app.core.dependencies import get_redis
 from app.core.errors import ApiError
+from app.core.rate_limit import user_rate_limit
 from app.core.responses import success
 from app.bookings.schemas import CreateBookingRequest, SlotLockRequest
 from app.payments.service import RazorpayGateway
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
-LOCK_PREFIX = "voltstop:booking-lock:"
 
 
 def payment_gateway(request: Request, settings: Settings = Depends(get_settings)) -> RazorpayGateway:
     return RazorpayGateway(request.app.state.http_client, settings)
 
 
-def _lock_key(slot_id: UUID) -> str:
-    return f"{LOCK_PREFIX}{slot_id}"
+def _lock_key(slot_id: UUID, settings: Settings) -> str:
+    return f"{settings.booking_lock_prefix}{slot_id}"
 
 
 async def _release_lock(redis: Any, key: str, expected: str) -> None:
@@ -41,6 +43,15 @@ async def _release_lock(redis: Any, key: str, expected: str) -> None:
         return
 
 
+def _request_fingerprint(payload: CreateBookingRequest) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            {"slot_id": str(payload.slot_id), "lock_token": payload.lock_token},
+            sort_keys=True, separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+
 @router.post("/lock")
 async def lock_slot(
     payload: SlotLockRequest,
@@ -48,6 +59,7 @@ async def lock_slot(
     database: DatabaseDependency,
     redis=Depends(get_redis),
     settings: Settings = Depends(get_settings),
+    _limit: None = Depends(user_rate_limit("booking-lock", 20, 60)),
 ) -> dict[str, Any]:
     slot = await database.slot(payload.slot_id)
     if slot is None:
@@ -56,7 +68,7 @@ async def lock_slot(
     lock_value = f"{user.id}:{lock_token}"
     try:
         acquired = await redis.set(
-            _lock_key(payload.slot_id), lock_value,
+            _lock_key(payload.slot_id, settings), lock_value,
             nx=True,
             ex=settings.booking_lock_ttl_seconds,
         )
@@ -78,8 +90,10 @@ async def create_booking(
     database: DatabaseDependency,
     redis=Depends(get_redis),
     gateway: RazorpayGateway = Depends(payment_gateway),
+    settings: Settings = Depends(get_settings),
+    _limit: None = Depends(user_rate_limit("booking-create", 10, 60)),
 ) -> dict[str, Any]:
-    key = _lock_key(payload.slot_id)
+    key = _lock_key(payload.slot_id, settings)
     try:
         lock_value = await redis.get(key)
     except RedisError as exc:
@@ -94,26 +108,53 @@ async def create_booking(
         slot = await database.slot(payload.slot_id)
         if slot is None:
             raise ApiError(409, "SLOT_UNAVAILABLE", "Slot is no longer available")
-        booking_id = uuid4()
-        payment_order = await gateway.create_order(booking_id, Decimal(slot["price_inr"]))
-        booking = await database.create_pending_booking(
+        idempotency_key = f"lock:{payload.lock_token}"
+        booking, created = await database.create_pending_booking(
             user.id,
             payload.slot_id,
-            booking_id,
-            payment_order["order_id"],
+            uuid4(),
             Decimal(slot["price_inr"]),
+            idempotency_key,
+            _request_fingerprint(payload),
+            settings.booking_lock_ttl_seconds,
         )
+        if created:
+            try:
+                payment_order = await gateway.create_order(booking["id"], Decimal(slot["price_inr"]))
+            except ApiError:
+                await database.mark_order_unknown(booking["payment_id"])
+                raise
+            try:
+                await database.attach_order(booking["payment_id"], payment_order["order_id"])
+            except ApiError:
+                await database.mark_order_unknown(booking["payment_id"])
+                raise
+            booking["payment"] = {
+                "order_id": payment_order["order_id"],
+                "amount_paise": payment_order["amount_paise"],
+                "currency": payment_order["currency"],
+                "key_id": payment_order["key_id"],
+                "status": "pending",
+            }
+        else:
+            if booking.get("order_state") == "reconciliation_required" or not booking.get("razorpay_order_id"):
+                raise ApiError(
+                    503, "PAYMENT_RECONCILIATION_REQUIRED",
+                    "This booking's payment order is awaiting reconciliation; please wait and retry",
+                )
+            booking["payment"] = {
+                "order_id": booking["razorpay_order_id"],
+                "amount_paise": int(Decimal(booking["amount_inr"]) * 100),
+                "currency": booking.get("currency") or "INR",
+                "key_id": settings.razorpay_key_id,
+                "status": booking.get("payment_status") or "pending",
+            }
     finally:
         await _release_lock(redis, key, expected_value)
 
-    booking["payment"] = {
-        "order_id": payment_order["order_id"],
-        "amount_paise": payment_order["amount_paise"],
-        "currency": payment_order["currency"],
-        "key_id": payment_order["key_id"],
-        "status": "pending",
-    }
-    return success(booking, "Booking created; payment confirmation is pending")
+    message = ("Booking confirmed" if booking.get("status") == "confirmed"
+               else "Booking created; payment confirmation is pending")
+    return success(booking, message)
 
 
 @router.get("")

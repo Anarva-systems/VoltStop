@@ -285,4 +285,46 @@ def create_cors_application(
     return cors_application
 
 
-app = create_cors_application(api_app, settings.vendor_portal_allowed_origins)
+class SecurityHeadersMiddleware:
+    """Adds defensive response headers to every HTTP response.
+
+    HSTS is emitted only for HTTPS requests so local HTTP development and
+    any future plaintext ingress are unaffected.
+    """
+
+    _ALWAYS = [
+        ("X-Content-Type-Options", "nosniff"),
+        ("X-Frame-Options", "DENY"),
+        ("Referrer-Policy", "no-referrer"),
+        ("Permissions-Policy", "camera=(), geolocation=(), microphone=()"),
+    ]
+
+    def __init__(self, application: Any) -> None:
+        self.application = application
+        if hasattr(application, "dependency_overrides"):
+            self.dependency_overrides = application.dependency_overrides
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.application(scope, receive, send)
+            return
+
+        async def send_with_headers(message: dict[str, Any]) -> None:
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                present = {name.lower() for name, _ in headers}
+                additions = list(self._ALWAYS)
+                if scope.get("scheme") == "https":
+                    additions.append(
+                        ("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+                    )
+                for name, value in additions:
+                    if name.lower() not in present:
+                        headers.append((name.encode("latin-1"), value.encode("latin-1")))
+                message["headers"] = headers
+            await send(message)
+
+        await self.application(scope, receive, send_with_headers)
+
+
+app = create_cors_application(SecurityHeadersMiddleware(api_app), settings.vendor_portal_allowed_origins)

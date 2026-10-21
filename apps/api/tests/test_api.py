@@ -289,7 +289,8 @@ class FakeDatabase:
     async def recommended_route_vendors(self, route_geojson):
         return [{"vendor": {"id": str(VENDOR_ID)}, "distance_km": 2.0}]
 
-    async def create_pending_booking(self, user_id, slot_id, booking_id, order_id, expected_amount):
+    async def create_pending_booking(self, user_id, slot_id, booking_id, expected_amount,
+                                     idempotency_key, request_fingerprint, hold_expires_seconds):
         if self.force_booking_conflict:
             raise ApiError(409, "SLOT_UNAVAILABLE", "Slot is no longer available")
         self.booking_record = {
@@ -300,13 +301,25 @@ class FakeDatabase:
             "payment_id": uuid4(),
             "amount_paid": Decimal("0.00"),
             "status": "pending",
-            "razorpay_order_id": order_id,
+            "razorpay_order_id": None,
             "razorpay_payment_id": None,
             "amount_inr": Decimal("350.00"),
             "currency": "INR",
             "payment_status": "pending",
+            "order_state": "creating",
+            "request_fingerprint": request_fingerprint,
+            "idempotency_key": idempotency_key,
         }
-        return self.booking_record
+        return self.booking_record, True
+
+    async def attach_order(self, payment_id, order_id):
+        if self.booking_record and self.booking_record["payment_id"] == payment_id:
+            self.booking_record["razorpay_order_id"] = order_id
+            self.booking_record["order_state"] = "ready"
+
+    async def mark_order_unknown(self, payment_id):
+        if self.booking_record and self.booking_record["payment_id"] == payment_id:
+            self.booking_record["order_state"] = "reconciliation_required"
 
     async def bookings(self, user_id, limit, offset):
         if self.booking_record and self.booking_record["user_id"] == user_id:

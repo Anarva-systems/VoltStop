@@ -1204,16 +1204,67 @@ class Database:
             )
         return [_record_value(row) or {} for row in rows]
 
+    async def _expire_pending_bookings(self, connection: Any) -> None:
+        expired = await connection.fetch(
+            """select id, slot_id from public.bookings
+               where status='pending' and hold_expires_at is not null and hold_expires_at <= now()
+               order by hold_expires_at limit 100 for update skip locked"""
+        )
+        for booking in expired:
+            await connection.execute(
+                "update public.bookings set status='expired', updated_at=now() where id=$1",
+                booking["id"],
+            )
+            await connection.execute(
+                "insert into public.booking_events (booking_id, event_type) values ($1, 'expired')",
+                booking["id"],
+            )
+            await connection.execute(
+                """update public.charging_slots cs set status='available'
+                   where cs.id=$1 and cs.status='booked' and (
+                     select count(*) from public.bookings b
+                     where b.slot_id=cs.id and b.status in ('pending','confirmed')
+                   ) < cs.capacity""",
+                booking["slot_id"],
+            )
+
     async def create_pending_booking(
         self,
         user_id: UUID,
         slot_id: UUID,
         booking_id: UUID,
-        razorpay_order_id: str,
         expected_amount: Decimal,
-    ) -> dict[str, Any]:
+        idempotency_key: str,
+        request_fingerprint: str,
+        hold_expires_seconds: int,
+    ) -> tuple[dict[str, Any], bool]:
         async with self.pool.acquire() as connection:
             async with connection.transaction():
+                # Serialize a caller's idempotency key before checking for a replay.
+                await connection.execute(
+                    "select pg_advisory_xact_lock(hashtext($1), hashtext($2))",
+                    str(user_id), idempotency_key,
+                )
+                await self._expire_pending_bookings(connection)
+                replay = await connection.fetchrow(
+                    """select b.id, b.user_id, b.vendor_id, b.slot_id, b.payment_id,
+                              b.amount_paid, b.status, b.created_at, b.updated_at, b.request_fingerprint,
+                              p.razorpay_order_id, p.amount_inr, p.currency, p.status as payment_status,
+                              p.order_state, v.name as vendor_name, v.address as vendor_address, v.type as vendor_type,
+                              v.lat as vendor_lat, v.lng as vendor_lng, cs.service_type,
+                              cs.slot_start_time, cs.slot_end_time
+                       from public.bookings b
+                       join public.payments p on p.id=b.payment_id
+                       join public.vendors v on v.id=b.vendor_id
+                       join public.charging_slots cs on cs.id=b.slot_id
+                       where b.user_id=$1 and b.idempotency_key=$2 for update of b""",
+                    user_id, idempotency_key,
+                )
+                if replay is not None:
+                    if replay["request_fingerprint"] != request_fingerprint:
+                        raise ApiError(409, "IDEMPOTENCY_KEY_REUSED", "This request conflicts with a previous booking")
+                    return _record_value(replay) or {}, False
+
                 slot = await connection.fetchrow(
                     """select cs.id, cs.vendor_id, cs.capacity, cs.price_inr,
                               cs.slot_start_time, cs.slot_end_time, cs.status,
@@ -1241,21 +1292,45 @@ class Database:
                     )
                     raise ApiError(409, "SLOT_UNAVAILABLE", "Slot capacity has been reached")
 
-                await connection.execute(
+                inserted = await connection.fetchrow(
                     """insert into public.bookings
-                         (id, user_id, vendor_id, slot_id, amount_paid, status)
-                       values ($1, $2, $3, $4, 0, 'pending')""",
+                         (id, user_id, vendor_id, slot_id, amount_paid, status,
+                          hold_expires_at, idempotency_key, request_fingerprint)
+                       values ($1, $2, $3, $4, 0, 'pending',
+                               now() + ($5::text || ' seconds')::interval, $6, $7)
+                       on conflict (user_id, idempotency_key) do nothing
+                       returning id""",
                     booking_id,
                     user_id,
                     slot["vendor_id"],
                     slot_id,
+                    hold_expires_seconds,
+                    idempotency_key,
+                    request_fingerprint,
                 )
+                if inserted is None:
+                    existing = await connection.fetchrow(
+                        """select b.id, b.user_id, b.vendor_id, b.slot_id, b.payment_id,
+                                  b.amount_paid, b.status, b.created_at, b.updated_at, b.request_fingerprint,
+                                  p.razorpay_order_id, p.amount_inr, p.currency, p.status as payment_status,
+                                  p.order_state, v.name as vendor_name, v.address as vendor_address, v.type as vendor_type,
+                                  v.lat as vendor_lat, v.lng as vendor_lng, cs.service_type,
+                                  cs.slot_start_time, cs.slot_end_time
+                           from public.bookings b
+                           join public.payments p on p.id=b.payment_id
+                           join public.vendors v on v.id=b.vendor_id
+                           join public.charging_slots cs on cs.id=b.slot_id
+                           where b.user_id=$1 and b.idempotency_key=$2""",
+                        user_id, idempotency_key,
+                    )
+                    if existing is None or existing["request_fingerprint"] != request_fingerprint:
+                        raise ApiError(409, "IDEMPOTENCY_KEY_REUSED", "This request conflicts with a previous booking")
+                    return _record_value(existing) or {}, False
                 payment_id = await connection.fetchval(
                     """insert into public.payments
-                         (booking_id, razorpay_order_id, amount_inr, currency, status)
-                       values ($1, $2, $3, 'INR', 'pending') returning id""",
+                         (booking_id, amount_inr, currency, status, order_state)
+                       values ($1, $2, 'INR', 'pending', 'creating') returning id""",
                     booking_id,
-                    razorpay_order_id,
                     slot["price_inr"],
                 )
                 await connection.execute(
@@ -1280,7 +1355,7 @@ class Database:
                     """select b.id, b.user_id, b.vendor_id, b.slot_id, b.payment_id,
                               b.amount_paid, b.status, b.created_at, b.updated_at,
                               p.razorpay_order_id, p.amount_inr, p.currency, p.status as payment_status,
-                              v.name as vendor_name, v.address as vendor_address, v.type as vendor_type,
+                              p.order_state, v.name as vendor_name, v.address as vendor_address, v.type as vendor_type,
                               v.lat as vendor_lat, v.lng as vendor_lng, cs.service_type,
                               cs.slot_start_time, cs.slot_end_time
                        from public.bookings b
@@ -1290,55 +1365,77 @@ class Database:
                        where b.id=$1""",
                     booking_id,
                 )
-        return _record_value(row) or {}
+        return _record_value(row) or {}, True
+
+    async def attach_order(self, payment_id: UUID, order_id: str) -> None:
+        async with self.pool.acquire() as connection:
+            result = await connection.execute(
+                """update public.payments set razorpay_order_id=$2, order_state='ready', updated_at=now()
+                   where id=$1 and order_state='creating' and razorpay_order_id is null""",
+                payment_id, order_id,
+            )
+            if result.endswith(" 0"):
+                raise ApiError(409, "PAYMENT_ORDER_STATE_CHANGED", "Booking payment is no longer available")
+
+    async def mark_order_unknown(self, payment_id: UUID) -> None:
+        async with self.pool.acquire() as connection:
+            await connection.execute(
+                """update public.payments set order_state='reconciliation_required', updated_at=now()
+                   where id=$1 and order_state='creating'""",
+                payment_id,
+            )
 
     async def bookings(self, user_id: UUID, limit: int, offset: int) -> list[dict[str, Any]]:
         async with self.pool.acquire() as connection:
-            rows = await connection.fetch(
-                """select b.id, b.user_id, b.vendor_id, b.slot_id, b.payment_id,
-                          b.amount_paid,b.status,b.cancellation_fee_inr,b.refund_amount_inr,
-                          b.cancellation_policy_version,b.cancelled_at,b.created_at,b.updated_at,
-                          p.razorpay_order_id, p.amount_inr, p.currency, p.status as payment_status,
-                          (select r.status from public.refunds r where r.booking_id=b.id order by r.created_at desc limit 1) as refund_status,
-                          v.name as vendor_name, v.address as vendor_address, v.type as vendor_type,
-                          v.lat as vendor_lat, v.lng as vendor_lng, cs.service_type,
-                          cs.slot_start_time, cs.slot_end_time
-                   from public.bookings b
-                   left join public.payments p on p.id=b.payment_id
-                   join public.vendors v on v.id=b.vendor_id
-                   join public.charging_slots cs on cs.id=b.slot_id
-                   where b.user_id=$1 order by b.created_at desc limit $2 offset $3""",
-                user_id,
-                limit,
-                offset,
-            )
+            async with connection.transaction():
+                await self._expire_pending_bookings(connection)
+                rows = await connection.fetch(
+                    """select b.id, b.user_id, b.vendor_id, b.slot_id, b.payment_id,
+                              b.amount_paid,b.status,b.cancellation_fee_inr,b.refund_amount_inr,
+                              b.cancellation_policy_version,b.cancelled_at,b.created_at,b.updated_at,
+                              p.razorpay_order_id, p.amount_inr, p.currency, p.status as payment_status,
+                              (select r.status from public.refunds r where r.booking_id=b.id order by r.created_at desc limit 1) as refund_status,
+                              v.name as vendor_name, v.address as vendor_address, v.type as vendor_type,
+                              v.lat as vendor_lat, v.lng as vendor_lng, cs.service_type,
+                              cs.slot_start_time, cs.slot_end_time
+                       from public.bookings b
+                       left join public.payments p on p.id=b.payment_id
+                       join public.vendors v on v.id=b.vendor_id
+                       join public.charging_slots cs on cs.id=b.slot_id
+                       where b.user_id=$1 order by b.created_at desc limit $2 offset $3""",
+                    user_id,
+                    limit,
+                    offset,
+                )
         return [_record_value(row) or {} for row in rows]
 
     async def booking(self, user_id: UUID, booking_id: UUID) -> dict[str, Any] | None:
         async with self.pool.acquire() as connection:
-            row = await connection.fetchrow(
-                """select b.id, b.user_id, b.vendor_id, b.slot_id, b.payment_id,
-                          b.amount_paid,b.status,b.cancellation_fee_inr,b.refund_amount_inr,
-                          b.cancellation_policy_version,b.cancelled_at,b.created_at,b.updated_at,
-                          p.razorpay_order_id, p.amount_inr, p.currency, p.status as payment_status,
-                          (select r.status from public.refunds r where r.booking_id=b.id order by r.created_at desc limit 1) as refund_status,
-                          v.name as vendor_name, v.address as vendor_address, v.type as vendor_type,
-                          v.lat as vendor_lat, v.lng as vendor_lng, cs.service_type,
-                          cs.slot_start_time, cs.slot_end_time
-                   from public.bookings b
-                   left join public.payments p on p.id=b.payment_id
-                   join public.vendors v on v.id=b.vendor_id
-                   join public.charging_slots cs on cs.id=b.slot_id
-                   where b.id=$1 and b.user_id=$2""",
-                booking_id,
-                user_id,
-            )
-            if row is None:
-                exists = await connection.fetchval(
-                    "select exists(select 1 from public.bookings where id=$1)", booking_id
+            async with connection.transaction():
+                await self._expire_pending_bookings(connection)
+                row = await connection.fetchrow(
+                    """select b.id, b.user_id, b.vendor_id, b.slot_id, b.payment_id,
+                              b.amount_paid,b.status,b.cancellation_fee_inr,b.refund_amount_inr,
+                              b.cancellation_policy_version,b.cancelled_at,b.created_at,b.updated_at,
+                              p.razorpay_order_id, p.amount_inr, p.currency, p.status as payment_status,
+                              (select r.status from public.refunds r where r.booking_id=b.id order by r.created_at desc limit 1) as refund_status,
+                              v.name as vendor_name, v.address as vendor_address, v.type as vendor_type,
+                              v.lat as vendor_lat, v.lng as vendor_lng, cs.service_type,
+                              cs.slot_start_time, cs.slot_end_time
+                       from public.bookings b
+                       left join public.payments p on p.id=b.payment_id
+                       join public.vendors v on v.id=b.vendor_id
+                       join public.charging_slots cs on cs.id=b.slot_id
+                       where b.id=$1 and b.user_id=$2""",
+                    booking_id,
+                    user_id,
                 )
-                if exists:
-                    raise ApiError(403, "FORBIDDEN", "You cannot access this booking")
+                if row is None:
+                    exists = await connection.fetchval(
+                        "select exists(select 1 from public.bookings where id=$1)", booking_id
+                    )
+                    if exists:
+                        raise ApiError(403, "FORBIDDEN", "You cannot access this booking")
         return _record_value(row)
 
     async def booking_cancellation_quote(self, user_id: UUID, booking_id: UUID) -> dict[str, Any] | None:
@@ -1371,6 +1468,7 @@ class Database:
     async def cancel_booking(self, user_id: UUID, booking_id: UUID) -> dict[str, Any] | None:
         async with self.pool.acquire() as connection:
             async with connection.transaction():
+                await self._expire_pending_bookings(connection)
                 row = await connection.fetchrow(
                     """select b.id,b.user_id,b.slot_id,b.status,b.payment_id,b.cancellation_fee_inr,
                               b.refund_amount_inr,b.cancellation_policy_version,b.cancelled_at,cs.slot_start_time,
@@ -1465,6 +1563,7 @@ class Database:
         try:
             async with self.pool.acquire() as connection:
                 async with connection.transaction():
+                    await self._expire_pending_bookings(connection)
                     payment = await connection.fetchrow(
                         """select id as payment_id, booking_id
                            from public.payments where razorpay_order_id=$1""",
@@ -1477,7 +1576,7 @@ class Database:
                     # Requiring the payment pointer here protects against cross-booking
                     # association errors even if legacy data violates the schema FK.
                     booking = await connection.fetchrow(
-                        """select id, payment_id, status as booking_status, slot_id
+                        """select id, user_id, payment_id, status as booking_status, slot_id, hold_expires_at
                            from public.bookings where id=$1 and payment_id=$2 for update""",
                         payment["booking_id"], payment["payment_id"],
                     )
@@ -1534,7 +1633,13 @@ class Database:
                         "insert into public.booking_events (booking_id, event_type) values ($1, $2)",
                         row["booking_id"], event,
                     )
-                    if captured and booking["booking_status"] == "pending":
+                    late_capture = captured and (
+                        booking["booking_status"] in ("expired", "cancelled")
+                        or (booking["booking_status"] == "pending"
+                            and booking["hold_expires_at"] is not None
+                            and booking["hold_expires_at"] <= datetime.now(timezone.utc))
+                    )
+                    if captured and booking["booking_status"] == "pending" and not late_capture:
                         await connection.execute(
                             "update public.bookings set status='confirmed', amount_paid=$2 where id=$1",
                             row["booking_id"], row["amount_inr"],
@@ -1542,6 +1647,18 @@ class Database:
                         await connection.execute(
                             "insert into public.booking_events (booking_id, event_type) values ($1, 'confirmed')",
                             row["booking_id"],
+                        )
+                    elif late_capture:
+                        # The hold has ended or the booking was cancelled: the slot
+                        # capacity is no longer reserved, so route the captured money
+                        # to finance review instead of confirming the booking.
+                        await connection.execute(
+                            """insert into public.refunds(booking_id,payment_id,requested_by,amount_inr,currency,
+                                      reason,status,idempotency_key)
+                               values($1,$2,$3,$4,'INR','Late payment capture after booking hold ended','requested',$5)
+                               on conflict(idempotency_key) do nothing""",
+                            row["booking_id"], row["payment_id"], booking["user_id"], row["amount_inr"],
+                            f"late-capture:{row['booking_id']}",
                         )
                     elif not captured and booking["booking_status"] == "pending":
                         await connection.execute(
