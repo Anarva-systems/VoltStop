@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     database_url: str = ""
     redis_url: str = "redis://localhost:6379/0"
     redis_enabled: bool = True
+    redis_key_prefix: str = ""
     booking_lock_ttl_seconds: int = 300
     razorpay_mode: str = ""
     razorpay_key_id: str = ""
@@ -77,6 +78,11 @@ class Settings(BaseSettings):
     def supabase_api_key(self) -> str:
         """Return the public Supabase key used for user-scoped Auth requests."""
         return self.supabase_publishable_key or self.supabase_anon_key
+
+    @property
+    def booking_lock_prefix(self) -> str:
+        """Redis key prefix for booking locks; isolates environments sharing a Redis."""
+        return f"{self.redis_key_prefix}voltstop:booking-lock:"
 
     @model_validator(mode="after")
     def validate_deployed_environment(self) -> "Settings":

@@ -8,7 +8,7 @@ from app.auth.dependencies import CurrentUser
 from app.core.database_dependency import DatabaseDependency
 from app.core.errors import ApiError
 from app.core.dependencies import get_redis
-from app.bookings.router import LOCK_PREFIX
+from app.core.config import Settings, get_settings
 from app.core.responses import success
 from app.vendors.portal_schemas import (
     ServiceCreate,
@@ -63,13 +63,14 @@ async def patch_vendor_profile(
 
 @router.get("/dashboard")
 async def get_vendor_dashboard(
-    user: CurrentUser, database: DatabaseDependency, redis=Depends(get_redis)
+    user: CurrentUser, database: DatabaseDependency, redis=Depends(get_redis),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     vendor_id = await _vendor_id(user, database)
     dashboard = await database.vendor_dashboard(user.id, vendor_id)
     capacity_slots = await database.vendor_available_capacity_slots(user.id, vendor_id)
     try:
-        lock_values = await redis.mget(*[f"{LOCK_PREFIX}{slot['id']}" for slot in capacity_slots]) if capacity_slots else []
+        lock_values = await redis.mget(*[f"{settings.booking_lock_prefix}{slot['id']}" for slot in capacity_slots]) if capacity_slots else []
     except RedisError as exc:
         raise ApiError(503, "LOCK_SERVICE_UNAVAILABLE", "Dashboard availability could not be refreshed") from exc
     held_capacity = sum(
@@ -161,12 +162,13 @@ async def add_vendor_dispute_message(
 
 @router.get("/availability")
 async def get_vendor_availability(
-    user: CurrentUser, database: DatabaseDependency, redis=Depends(get_redis)
+    user: CurrentUser, database: DatabaseDependency, redis=Depends(get_redis),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     vendor_id = await _vendor_id(user, database)
     slots = await database.vendor_slots_for_owner(user.id, vendor_id)
     try:
-        lock_values = await redis.mget(*[f"{LOCK_PREFIX}{slot['id']}" for slot in slots]) if slots else []
+        lock_values = await redis.mget(*[f"{settings.booking_lock_prefix}{slot['id']}" for slot in slots]) if slots else []
     except RedisError as exc:
         raise ApiError(503, "LOCK_SERVICE_UNAVAILABLE", "Availability lock state could not be loaded") from exc
     for slot, lock_value in zip(slots, lock_values):
@@ -187,10 +189,11 @@ async def create_vendor_slot(
 async def update_vendor_slot(
     slot_id: UUID, payload: SlotPatch, user: CurrentUser, database: DatabaseDependency,
     redis=Depends(get_redis),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     vendor_id = await _vendor_id(user, database)
     try:
-        locked = bool(await redis.get(f"{LOCK_PREFIX}{slot_id}"))
+        locked = bool(await redis.get(f"{settings.booking_lock_prefix}{slot_id}"))
     except RedisError as exc:
         raise ApiError(503, "LOCK_SERVICE_UNAVAILABLE", "Slot lock state could not be checked") from exc
     slot = await database.update_vendor_slot(
@@ -203,10 +206,11 @@ async def update_vendor_slot(
 async def delete_vendor_slot(
     slot_id: UUID, user: CurrentUser, database: DatabaseDependency,
     redis=Depends(get_redis),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     vendor_id = await _vendor_id(user, database)
     try:
-        locked = bool(await redis.get(f"{LOCK_PREFIX}{slot_id}"))
+        locked = bool(await redis.get(f"{settings.booking_lock_prefix}{slot_id}"))
     except RedisError as exc:
         raise ApiError(503, "LOCK_SERVICE_UNAVAILABLE", "Slot lock state could not be checked") from exc
     if locked:

@@ -10,7 +10,6 @@ from app.admin.auth import AdminContext, require_admin, require_permission
 from app.admin.refund_service import RefundService
 from app.admin.repository import AdminRepository
 from app.admin.schemas import AdminUserPatch, DisputeAction, DisputeCreate, DisputeRefundCreate, RefundCreate, RefundDecision, VendorAction
-from app.bookings.router import LOCK_PREFIX
 from app.core.config import Settings, get_settings
 from app.core.database_dependency import DatabaseDependency
 from app.core.dependencies import get_http_client, get_redis
@@ -148,12 +147,13 @@ async def booking_detail(booking_id: UUID,
 
 @router.get("/live-operations")
 async def live_operations(_admin: Annotated[AdminContext, Depends(require_permission("operations:read"))],
-                          database: DatabaseDependency, redis=Depends(get_redis)) -> dict[str, Any]:
+                          database: DatabaseDependency, redis=Depends(get_redis),
+                          settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     repository = AdminRepository(database.pool)
     vendors = await repository.live_operations()
     slots = await repository.live_operation_slots()
     try:
-        values = await redis.mget(*[f"{LOCK_PREFIX}{slot['id']}" for slot in slots]) if slots else []
+        values = await redis.mget(*[f"{settings.booking_lock_prefix}{slot['id']}" for slot in slots]) if slots else []
     except RedisError as exc:
         raise ApiError(503, "LOCK_SERVICE_UNAVAILABLE", "Live capacity could not be refreshed") from exc
     by_vendor: dict[UUID, int] = {}
