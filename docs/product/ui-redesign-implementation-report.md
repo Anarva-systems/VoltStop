@@ -13,11 +13,11 @@ This is an implementation report, not a proposal. Every item below is present in
 | 2 | Unified design system | Done — tokens, components, dialog and feedback contract documented and implemented |
 | 3 | Mobile screen groups (8) | Done — shared widgets extended, 7 screen files reworked, goldens regenerated |
 | 4 | Vendor + admin web dashboards | Done — dashboard and booking screens rebuilt, dialog system unified, admin console tuned |
-| 5 | Responsive behaviour | Done for code-level guarantees (see 4); device-farm verification still open |
+| 5 | Responsive behaviour | Done — code-level guarantees (4) plus real-browser geometry measurement at 320/390/1440 (6.2); device-farm verification still open |
 | 6 | Preserve functionality | Done — no API, auth, Supabase, DB, Razorpay, route or security change (see 5) |
-| 7 | Implement, not report | Done — 1,264 insertions in mobile `lib`, 440 in web |
-| 8 | Verification | Done — results in section 6 |
-| 9 | Deliverables | This document plus the two companion documents and the built APK |
+| 7 | Implement, not report | Done — 44 files, 2,327 insertions / 858 deletions in commit `3912e08` |
+| 8 | Verification | Done — results in section 6; `next lint` unavailable and reported as skipped |
+| 9 | Deliverables | This document plus the two companion documents and the rebuilt debug APK |
 
 ## 2. Mobile — shared design system
 
@@ -135,8 +135,15 @@ Inspected at code level and, for mobile, through rendering tests: onboarding and
 ## 8. Git outcome
 
 - Repository root: `D:\voltstop-1\production-work` (the only `.git` in the tree; `D:\voltstop-1` itself is not a repository). Branch `main`; single remote `origin → https://github.com/Anarva-systems/VoltStop.git`; the remote exposes exactly one head, `refs/heads/main`, so the target is unambiguous and no upstream-tracking guess was needed.
-- The earlier `git push origin main` failure (`src refspec main does not match any`) was a working-directory problem, not a repository problem: run from `D:\voltstop-1\production-work`, `git push --dry-run origin main` reports `f211c40..6bf925a main -> main` — a fast-forward with zero divergence behind the remote.
+- The earlier `git push origin main` failure (`src refspec main does not match any`) was a working-directory problem, not a repository problem: run from `D:\voltstop-1\production-work`, `git push --dry-run origin main` reported a clean fast-forward with zero divergence behind the remote.
+- **UI commit: `3912e0845024308883d60e734d0faf34971a19fd` — `chore(ui): finalize redesign and verification`**, 44 files changed, 2,327 insertions, 858 deletions.
+- **Pushed: `f211c40..3912e08 main -> main`** to `origin`, exit code 0. Confirmed independently: `git rev-list --left-right --count origin/main...main` is `0 0` and `git ls-remote --heads origin` returns `3912e0845024308883d60e734d0faf34971a19fd refs/heads/main`. No force-push, no history rewrite, no hook bypass.
+- The first push attempt failed with `Failed to connect to github.com port 443`; the outage was machine-wide (DNS timeouts, `https://example.com` also unreachable, no proxy configured), not a credential, permission or conflict problem. The retry after the network returned succeeded.
+- Because `main` was nine commits ahead, the push also published the eight previously-local reliability commits (`33706a9`…`6bf925a`), including the GitHub Actions workflows added in `c79ce9d`. Those runs started on GitHub.
+- The working tree still holds every unrelated change untouched: `apps/api/**`, `.github/workflows/**`, `apps/mobile/test/failures/*.png`, `apps/vendor-web/next.config.js`, the earlier-phase audit documents and the unapplied migration file.
 - Excluded from the UI commit, with reasons: `scripts/**` (untracked and not ignored; contains credential-reading tooling and staging state), `apps/api/**` and `.github/workflows/**` (the separate reliability programme), `apps/mobile/test/failures/*.png` (test artifacts), `apps/vendor-web/next.config.js` (machine-specific Windows build workaround), the earlier-phase audit docs, and `supabase/migrations/202610220001_vendor_approval_privilege_hardening.sql` (reviewed but deliberately **unapplied**).
+- Secret scan of the staged diff before committing found no credential, key or `.env` content; the only long literals were colour hex values, Dart identifiers, the migration filename and the APK SHA-256.
+- Note for later: `main` still has **no configured upstream**, so each push must name `origin main` explicitly. Setting it (`git branch --set-upstream-to=origin/main main`) was not done here.
 
 ## 9. Remaining issues
 
@@ -146,7 +153,7 @@ Inspected at code level and, for mobile, through rendering tests: onboarding and
 4. The dark base blocks in `globals.css`/`admin.css` remain dead code for an unselected theme; they were left untouched to avoid unrelated churn.
 5. Authenticated vendor/admin screens remain unverified in a browser (7.1) — the single largest open item.
 6. `next.config.js` carries a pre-existing Windows-only `experimental.webpackBuildWorker: false` workaround for an intermittent EPERM during chunk writes; it is not part of the redesign and is uncommitted.
-7. Pushing `main` publishes the eight previously-local reliability commits along with the UI commit, which will start the GitHub Actions workflows committed in `c79ce9d`.
+7. The rebuilt debug APK is a build artifact (`*.apk` is ignored) and is deliberately not in version control; it was not installed or run anywhere.
 
 ## 10. Safety compliance
 
