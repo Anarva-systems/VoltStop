@@ -188,6 +188,196 @@ class VoltError extends StatelessWidget {
       );
 }
 
+enum VoltStatusTone { positive, attention, negative, neutral }
+
+VoltStatusTone voltStatusTone(String value) {
+  const positive = {
+    'confirmed',
+    'completed',
+    'paid',
+    'resolved',
+    'ready',
+    'delivered',
+    'available',
+    'captured',
+    'accepted',
+    'active',
+    'scheduled',
+    'in_progress',
+    'verified',
+    'success',
+    'succeeded',
+    'default',
+  };
+  const attention = {
+    'pending',
+    'payment_pending',
+    'refund_pending',
+    'open',
+    'investigating',
+    'awaiting_customer',
+    'awaiting_vendor',
+    'under_review',
+    'limited',
+    'locked',
+    'authorized',
+    'processing',
+    'preparing',
+  };
+  const negative = {
+    'cancelled',
+    'failed',
+    'expired',
+    'rejected',
+    'declined',
+    'refund_failed',
+    'unavailable',
+    'error',
+  };
+  final key = value.toLowerCase().replaceAll(' ', '_');
+  if (positive.contains(key)) return VoltStatusTone.positive;
+  if (attention.contains(key)) return VoltStatusTone.attention;
+  if (negative.contains(key)) return VoltStatusTone.negative;
+  return VoltStatusTone.neutral;
+}
+
+String voltStatusLabel(String value) {
+  final label = value.replaceAll('_', ' ').replaceAll('-', ' ');
+  if (label.isEmpty) return label;
+  return '${label[0].toUpperCase()}${label.substring(1)}';
+}
+
+class VoltStatusPill extends StatelessWidget {
+  const VoltStatusPill({super.key, required this.status, this.compact = false});
+  final String status;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final tone = voltStatusTone(status);
+    final (Color background, Color foreground) = switch (tone) {
+      VoltStatusTone.positive => (
+          VoltColors.lime.withValues(alpha: .34),
+          VoltColors.forest
+        ),
+      VoltStatusTone.attention => (
+          VoltColors.warning.withValues(alpha: .13),
+          VoltColors.warning
+        ),
+      VoltStatusTone.negative => (
+          VoltColors.red.withValues(alpha: .10),
+          VoltColors.red
+        ),
+      VoltStatusTone.neutral => (VoltColors.elevated, VoltColors.muted),
+    };
+    return Container(
+      padding: EdgeInsets.symmetric(
+          horizontal: compact ? 8 : 10, vertical: compact ? 4 : 5),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(VoltRadii.pill),
+        border: Border.all(color: foreground.withValues(alpha: .22)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: compact ? 5 : 6,
+            height: compact ? 5 : 6,
+            decoration: BoxDecoration(
+              color: foreground,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            voltStatusLabel(status),
+            style: TextStyle(
+              color: foreground,
+              fontSize: compact ? 10 : 11,
+              fontWeight: FontWeight.w800,
+              height: 1,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class VoltEmptyState extends StatelessWidget {
+  const VoltEmptyState({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.description,
+    this.action,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) => VoltCard(
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 28),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          VoltIconBadge(icon: icon, size: 46),
+          const SizedBox(height: 13),
+          Text(title,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 6),
+          Text(description,
+              textAlign: TextAlign.center,
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: VoltColors.muted, height: 1.5)),
+          if (action != null) ...[
+            const SizedBox(height: 15),
+            action!,
+          ],
+        ]),
+      );
+}
+
+class VoltInlineError extends StatelessWidget {
+  const VoltInlineError({super.key, required this.message});
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: VoltColors.red.withValues(alpha: .08),
+          borderRadius: BorderRadius.circular(VoltRadii.control),
+          border: Border.all(color: VoltColors.red.withValues(alpha: .25)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.error_outline_rounded,
+                color: VoltColors.red, size: 17),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(
+                  color: VoltColors.red,
+                  fontSize: 12,
+                  height: 1.45,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+}
+
 class BrandMark extends StatelessWidget {
   const BrandMark({super.key, this.compact = false});
   final bool compact;

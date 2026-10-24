@@ -160,17 +160,21 @@ void main() {
         carModel: 'Tata Nexon EV',
         batteryKwh: 40,
         efficiencyKmPerKwh: 6,
+        currentSoc: 75,
       );
 
     await tester.pumpWidget(
       MaterialApp(
         theme: buildVoltStopTheme(),
-        home: DriverShell(app: app),
+        home: DriverShell(
+          app: app,
+          clock: () => DateTime(2026, 10, 23, 9, 0),
+        ),
       ),
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Where to next?'), findsOneWidget);
+    expect(find.text('Where to next, Maya?'), findsOneWidget);
     expect(find.text('PLAN A CHARGE-READY ROUTE'), findsOneWidget);
     expect(find.text('Current battery charge'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -182,13 +186,13 @@ void main() {
     await tester.tap(find.byTooltip('Reverse route'));
     await tester.pumpAndSettle();
     expect(find.text('FROM'), findsOneWidget);
-    expect(find.text('Vijayawada'), findsOneWidget);
+    expect(find.text('Vijayawada'), findsWidgets);
     await tester.scrollUntilVisible(
-      find.text('Stops worth the pause'),
+      find.text('Stops on your route'),
       260,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('Stops worth the pause'), findsOneWidget);
+    expect(find.text('Stops on your route'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('Coastline Charge Hub'),
       260,
@@ -240,7 +244,7 @@ void main() {
     await tester.scrollUntilVisible(
       find.text('Estimated drive time'),
       240,
-      scrollable: find.byType(Scrollable).last,
+      scrollable: find.byType(Scrollable).first,
     );
     expect(find.text('Estimated drive time'), findsOneWidget);
     expect(find.text('3 hr'), findsOneWidget);
@@ -359,7 +363,17 @@ class _PreviewDriverRepository extends DriverRepository {
       'estimated_duration_seconds': 10800,
       'estimated_consumption_kwh': 74.56,
       'estimated_remaining_soc': stateOfCharge - 186.4,
-      'recommended_pitstops': <dynamic>[],
+      'recommended_pitstops': <dynamic>[
+        {
+          'vendor': {
+            'id': 'nh16-coastline',
+            'name': 'Coastline Charge Hub',
+            'type': 'charging',
+            'address': 'Tuni, Andhra Pradesh',
+          },
+          'distance_km': 18.4,
+        },
+      ],
     };
   }
 

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { apiPost } from "@/services/api";
-import { Button, ErrorState, formatDate, formatMoney, formatTime, Icon, PageHeader, Panel, SectionHeading, Skeleton, StatePill, toast, useAccessToken, useVendorQuery } from "@/components/portal";
+import { Button, ConfirmDialog, EmptyState, ErrorState, formatDate, formatMoney, formatTime, Icon, PageHeader, Panel, SectionHeading, Skeleton, StatePill, toast, useAccessToken, useVendorQuery } from "@/components/portal";
 import type { VendorDashboard } from "@/types/vendor";
 
 const events: Record<string, string> = {
@@ -24,6 +24,7 @@ export default function VendorDashboardPage() {
   const token = useAccessToken();
   const dashboard = useVendorQuery<VendorDashboard>("/dashboard", token);
   const [actionBusy, setActionBusy] = useState("");
+  const [confirmId, setConfirmId] = useState<string | null>(null);
 
   async function accept(bookingId: string) {
     if (!token) return;
@@ -31,6 +32,7 @@ export default function VendorDashboardPage() {
     try {
       await apiPost(`/bookings/${bookingId}/accept`, token);
       toast("Booking accepted");
+      setConfirmId(null);
       dashboard.reload();
     } catch (reason) { toast(reason instanceof Error ? reason.message : "Could not accept booking"); }
     finally { setActionBusy(""); }
@@ -39,7 +41,9 @@ export default function VendorDashboardPage() {
   return <>
     <div className="dashboard-greeting"><span/>DAILY OPERATIONS · {formatDate(new Date(), { weekday: "long", day: "numeric", month: "long" })}</div>
     <PageHeader title="Your highway stop, at a glance" description="Bookings and service activity for your VoltStop location." action={<Button variant="secondary" onClick={dashboard.reload}><Icon name="refresh"/>Refresh</Button>}/>
-    {dashboard.loading ? <><div className="metric-grid">{Array.from({ length: 4 }, (_, index) => <Panel key={index} className="panel-pad"><Skeleton rows={2}/></Panel>)}</div><div className="dashboard-grid"><Panel className="panel-pad"><Skeleton rows={7}/></Panel><Panel className="panel-pad"><Skeleton rows={6}/></Panel></div></> : dashboard.error ? <Panel><ErrorState message={dashboard.error} onRetry={dashboard.reload}/>{dashboard.error.includes("No vendor profile is linked to this account") && <div style={{ padding: "0 24px 22px", display: "flex", justifyContent: "center" }}><Link className="button button-primary" href="/vendor/profile">Set up business profile <Icon name="arrow" size={14}/></Link></div>}</Panel> : dashboard.data && <>
+    {dashboard.loading ? <><div className="metric-grid">{Array.from({ length: 4 }, (_, index) => <Panel key={index} className="panel-pad"><Skeleton rows={2}/></Panel>)}</div><div className="dashboard-grid"><Panel className="panel-pad"><Skeleton rows={7}/></Panel><Panel className="panel-pad"><Skeleton rows={6}/></Panel></div></> : dashboard.error ? <Panel className="panel-pad">{dashboard.errorCode === "VENDOR_PROFILE_NOT_FOUND"
+      ? <EmptyState title="Finish your business profile" description="No vendor profile is linked to this account yet. Add your location, services and pricing to start receiving bookings." action={<Link className="button button-primary" href="/vendor/profile">Set up business profile <Icon name="arrow" size={14}/></Link>}/>
+      : <ErrorState message={dashboard.error} onRetry={dashboard.reload}/>}</Panel> : dashboard.data && <>
       <div className="metric-grid">
         <Metric title="Pending Requests" value={dashboard.data.metrics.pending_requests} note="Paid bookings awaiting your response" icon="inbox" tone="cyan"/>
         <Metric title="Today’s Bookings" value={dashboard.data.metrics.todays_bookings} note="Reservations scheduled today" icon="calendar" tone="green"/>
@@ -65,21 +69,36 @@ export default function VendorDashboardPage() {
           <Panel className="panel-pad">
             <SectionHeading title="Incoming requests" detail="Payment-confirmed bookings waiting for acknowledgement" action={<Link className="action-link" href="/vendor/requests">View all <Icon name="arrow" size={14}/></Link>}/>
             {dashboard.data.requests.length === 0 ? <div className="state-box"><span className="state-icon"><Icon name="inbox"/></span><h3>You’re all caught up</h3><p>New confirmed requests will appear here.</p></div> : <div className="request-list">{dashboard.data.requests.map((item) => <div className="request-row" key={item.booking_id}>
-              <div className="schedule-row" style={{ gridTemplateColumns: "1fr auto", gap: 8 }}><div><div className="schedule-name">{item.customer_name || "VoltStop driver"}</div><div className="schedule-meta">{formatDate(item.slot_start_time, { day: "numeric", month: "short" })} · {formatTime(item.slot_start_time)} · {formatMoney(item.amount_inr)}</div></div><StatePill value={item.payment_status ?? "pending"}/></div>
-              <div className="table-actions" style={{ paddingBottom: 12 }}><Link className="action-link" href={`/vendor/bookings/${item.booking_id}`}>View</Link><Button disabled={actionBusy === item.booking_id} onClick={() => accept(item.booking_id)}>{actionBusy === item.booking_id ? "Saving…" : "Accept"}</Button></div>
+              <div className="request-row-summary"><div><div className="schedule-name">{item.customer_name || "VoltStop driver"}</div><div className="schedule-meta">{formatDate(item.slot_start_time, { day: "numeric", month: "short" })} · {formatTime(item.slot_start_time)} · {formatMoney(item.amount_inr)}</div></div><StatePill value={item.payment_status ?? "pending"}/></div>
+              <div className="request-row-actions"><Link className="action-link" href={`/vendor/bookings/${item.booking_id}`}>View</Link><Button disabled={actionBusy === item.booking_id} onClick={() => setConfirmId(item.booking_id)}>{actionBusy === item.booking_id ? "Saving…" : "Accept"}</Button></div>
             </div>)}</div>}
-            <p className="label-note" style={{ marginTop: 12 }}>Requests are shown after secure payment confirmation. Rejections and refunds are not enabled by the current booking lifecycle.</p>
+            <p className="label-note label-note-spaced">Requests are shown after secure payment confirmation. Rejections and refunds are not enabled by the current booking lifecycle.</p>
           </Panel>
           <Panel className="panel-pad">
             <SectionHeading title="Availability summary" detail="Today’s open slot capacity" action={<Link className="action-link" href="/vendor/availability">Manage <Icon name="arrow" size={14}/></Link>}/>
-            <div className="availability-summary"><div className="availability-caption"><span>Open capacity</span><strong>{dashboard.data.metrics.available_capacity}</strong></div><div className="availability-bar"><span style={{ width: dashboard.data.metrics.available_capacity ? "100%" : "0%" }}/></div><div className="mini-stats"><div className="mini-stat"><strong>{dashboard.data.schedule.length}</strong><span>BOOKINGS TODAY</span></div><div className="mini-stat"><strong>{dashboard.data.requests.length}</strong><span>NEED ACKNOWLEDGEMENT</span></div><div className="mini-stat"><strong>{dashboard.data.metrics.available_capacity}</strong><span>PLACES OPEN</span></div></div></div>
+            <div className="availability-summary">
+              <div className="mini-stats">
+                <div className="mini-stat"><strong>{dashboard.data.metrics.available_capacity}</strong><span>PLACES OPEN</span></div>
+                <div className="mini-stat"><strong>{dashboard.data.schedule.length}</strong><span>BOOKINGS TODAY</span></div>
+                <div className="mini-stat"><strong>{dashboard.data.requests.length}</strong><span>NEED ACKNOWLEDGEMENT</span></div>
+              </div>
+              <p className="label-note label-note-spaced">Open capacity reflects published slots for today and does not confirm real-time charger availability.</p>
+            </div>
           </Panel>
         </div>
       </div>
     </>}
+    {confirmId && <ConfirmDialog
+      title="Accept this booking?"
+      description={<>Confirm that your team will honour reservation <strong>{confirmId.slice(0, 8).toUpperCase()}</strong>. This marks the paid booking as acknowledged.</>}
+      confirmLabel="Accept booking"
+      busy={actionBusy === confirmId}
+      onClose={() => setConfirmId(null)}
+      onConfirm={() => accept(confirmId)}
+    />}
   </>;
 }
 
 function Metric({ title, value, note, icon, tone }: { title: string; value: string | number; note: string; icon: string; tone: "green" | "cyan" }) {
-  return <div className="metric-card"><div className="metric-top"><span>{title}</span><span className="metric-icon" style={{ color: tone === "green" ? "var(--green)" : "var(--cyan)" }}><Icon name={icon}/></span></div><strong>{value}</strong><div className="metric-note">{note}</div></div>;
+  return <div className="metric-card"><div className="metric-top"><span>{title}</span><span className={`metric-icon metric-icon-${tone}`}><Icon name={icon}/></span></div><strong>{value}</strong><div className="metric-note">{note}</div></div>;
 }

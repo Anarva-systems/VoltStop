@@ -186,3 +186,6 @@
 @media (prefers-reduced-motion: reduce) {
   .public-home *, .public-home *::before, .public-home *::after { scroll-behavior:auto !important; animation-duration:.01ms !important; transition-duration:.01ms !important; }
 }
+
+/* Touch-target floor: these are flex children, so min-height widens the hit area without changing type or line rhythm (WCAG 2.5.8). */
+.public-navigation a,.public-signin,.public-text-link,.public-footer a:not(.public-brand) { display:inline-flex; min-height:24px; align-items:center; }

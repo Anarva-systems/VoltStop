@@ -46,12 +46,13 @@ class _DisputesScreenState extends State<DisputesScreen> {
             }
             final items = snapshot.data ?? const <Map<String, dynamic>>[];
             if (items.isEmpty) {
-              return const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Text(
+              return const Padding(
+                padding: EdgeInsets.all(18),
+                child: VoltEmptyState(
+                  icon: Icons.support_agent_outlined,
+                  title: 'No disputes yet',
+                  description:
                       'Disputes for eligible bookings will appear here.',
-                      textAlign: TextAlign.center),
                 ),
               );
             }
@@ -60,19 +61,57 @@ class _DisputesScreenState extends State<DisputesScreen> {
               itemCount: items.length,
               itemBuilder: (context, index) {
                 final item = items[index];
-                return Card(
-                  child: ListTile(
-                    title: Text('${item['reason'] ?? 'Booking dispute'}'),
-                    subtitle: Text(
-                        'Booking ${item['booking_id'] ?? '—'}\nStatus: ${item['status'] ?? '—'}'),
-                    isThreeLine: true,
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => DisputeDetailsScreen(
-                          app: widget.app,
-                          disputeId: '${item['id']}',
+                final status = '${item['status'] ?? 'unknown'}';
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 11),
+                  child: VoltCard(
+                    padding: EdgeInsets.zero,
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(VoltRadii.card),
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => DisputeDetailsScreen(
+                              app: widget.app,
+                              disputeId: '${item['id']}',
+                            ),
+                          ),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Row(children: [
+                            const VoltIconBadge(
+                                icon: Icons.support_agent_outlined, size: 38),
+                            const SizedBox(width: 11),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('${item['reason'] ?? 'Booking dispute'}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 14)),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    'Booking ${item['booking_id'] ?? '—'}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        color: VoltColors.muted, fontSize: 11),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            VoltStatusPill(status: status, compact: true),
+                            const SizedBox(width: 4),
+                            const Icon(Icons.chevron_right_rounded,
+                                color: VoltColors.muted, size: 20),
+                          ]),
                         ),
                       ),
                     ),
@@ -167,11 +206,17 @@ class _DisputeDetailsScreenState extends State<DisputeDetailsScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('${data['reason'] ?? 'Booking dispute'}',
-                        style: Theme.of(context).textTheme.titleLarge),
+                    Row(children: [
+                      Expanded(
+                        child: Text('${data['reason'] ?? 'Booking dispute'}',
+                            style: Theme.of(context).textTheme.titleLarge),
+                      ),
+                      const SizedBox(width: 8),
+                      VoltStatusPill(status: '${data['status'] ?? 'unknown'}'),
+                    ]),
                     const SizedBox(height: 8),
-                    Text('Status: ${data['status'] ?? '—'}'),
-                    Text('Booking: ${data['booking_id'] ?? '—'}'),
+                    Text('Booking: ${data['booking_id'] ?? '—'}',
+                        style: const TextStyle(color: VoltColors.muted)),
                     if (data['description'] != null) ...[
                       const Divider(height: 24),
                       Text('${data['description']}'),
@@ -187,12 +232,42 @@ class _DisputeDetailsScreenState extends State<DisputeDetailsScreen> {
                   child: Text('No updates yet.',
                       style: TextStyle(color: VoltColors.muted)),
                 ),
-              ...timeline.map((event) => ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.forum_outlined,
-                        color: VoltColors.cyan),
-                    title: Text('${event['event_type'] ?? 'Update'}'),
-                    subtitle: Text('${event['message'] ?? ''}'),
+              ...timeline.map((event) => Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 30,
+                          height: 30,
+                          margin: const EdgeInsets.only(top: 2),
+                          decoration: BoxDecoration(
+                            color: VoltColors.elevated,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(Icons.forum_outlined,
+                              size: 16, color: VoltColors.forest),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('${event['event_type'] ?? 'Update'}',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 13)),
+                              const SizedBox(height: 3),
+                              Text('${event['message'] ?? ''}',
+                                  style: const TextStyle(
+                                      color: VoltColors.muted,
+                                      fontSize: 12,
+                                      height: 1.4)),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   )),
               const SizedBox(height: 12),
               TextField(
@@ -301,7 +376,7 @@ class _CreateDisputeScreenState extends State<CreateDisputeScreen> {
           ),
           if (_error != null) ...[
             const SizedBox(height: 10),
-            Text(_error!, style: const TextStyle(color: VoltColors.red)),
+            VoltInlineError(message: _error!),
           ],
           const SizedBox(height: 16),
           FilledButton(

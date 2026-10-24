@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import { apiPost } from "@/services/api";
-import { Button, ErrorState, formatDate, formatMoney, formatTime, Icon, PageHeader, Panel, SectionHeading, Skeleton, StatePill, toast, useAccessToken, useVendorQuery } from "@/components/portal";
+import { Button, ConfirmDialog, ErrorState, formatDate, formatMoney, formatTime, Icon, PageHeader, Panel, SectionHeading, Skeleton, StatePill, toast, useAccessToken, useVendorQuery } from "@/components/portal";
 import type { VendorBooking } from "@/types/vendor";
 
 const eventNames: Record<string, string> = {
@@ -25,6 +25,7 @@ export default function VendorBookingDetailPage() {
   const token = useAccessToken();
   const bookingState = useVendorQuery<VendorBooking>(`/bookings/${bookingId}`, token);
   const [busy, setBusy] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<"accept" | "complete" | null>(null);
   const booking = bookingState.data;
   const canAccept = booking?.status === "confirmed" && booking.payment_status === "captured" && booking.webhook_verified && booking.vendor_acknowledgement === "pending";
   const canComplete = booking?.status === "confirmed" && booking.payment_status === "captured" && booking.vendor_acknowledgement === "accepted";
@@ -35,6 +36,7 @@ export default function VendorBookingDetailPage() {
     try {
       await apiPost(`/bookings/${booking.booking_id}/${action}`, token);
       toast(action === "accept" ? "Booking accepted" : "Booking marked complete");
+      setConfirmAction(null);
       bookingState.reload();
     } catch (reason) { toast(reason instanceof Error ? reason.message : "Could not update booking"); }
     finally { setBusy(false); }
@@ -63,10 +65,20 @@ export default function VendorBookingDetailPage() {
             <Field label="Created at" value={formatDate(booking.created_at, { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" })}/>
           </div>
           <div className="form-actions" style={{ justifyContent: "flex-start" }}>
-            {canAccept && <Button disabled={busy} onClick={() => act("accept")}>{busy ? "Saving…" : "Accept booking"}</Button>}
-            {canComplete && <Button disabled={busy} onClick={() => act("complete")}>{busy ? "Saving…" : "Mark completed"}</Button>}
+            {canAccept && <Button disabled={busy} onClick={() => setConfirmAction("accept")}>Accept booking</Button>}
+            {canComplete && <Button disabled={busy} onClick={() => setConfirmAction("complete")}>Mark completed</Button>}
             {!canAccept && !canComplete && <div className="verification-state"><Icon name="check" size={15}/>{booking.status === "confirmed" && booking.vendor_acknowledgement === "accepted" ? "Your team has accepted this paid booking." : booking.status === "confirmed" ? "Booking actions are waiting for verified payment." : "No vendor action is available in this booking state."}</div>}
           </div>
+          {confirmAction && <ConfirmDialog
+            title={confirmAction === "accept" ? "Accept this booking?" : "Mark this visit complete?"}
+            description={confirmAction === "accept"
+              ? <>Confirm that your team will honour reservation <strong>{booking.booking_id.slice(0, 8).toUpperCase()}</strong>. This marks the paid booking as acknowledged.</>
+              : <>Marking complete records that the driver’s visit at <strong>{booking.vendor_name || "your business"}</strong> has finished.</>}
+            confirmLabel={confirmAction === "accept" ? "Accept booking" : "Mark completed"}
+            busy={busy}
+            onClose={() => setConfirmAction(null)}
+            onConfirm={() => act(confirmAction)}
+          />}
           <p className="label-note" style={{ marginTop: 13 }}>Only the server-verified Razorpay payment state can unlock vendor acknowledgement. Payment state cannot be edited here.</p>
         </Panel>
         <Panel className="panel-pad"><SectionHeading title="Booking timeline" detail="Events recorded by VoltStop"/>

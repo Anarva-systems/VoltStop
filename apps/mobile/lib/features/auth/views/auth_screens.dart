@@ -415,7 +415,7 @@ class _OtpScreenState extends State<OtpScreen> {
   bool _authenticated = false;
   int _resendSeconds = _resendCooldownSeconds;
   Timer? _resendTimer;
-  String _requestStatus = 'Code request accepted';
+  String _requestStatus = 'Request accepted';
   String? _error;
 
   @override
@@ -457,7 +457,7 @@ class _OtpScreenState extends State<OtpScreen> {
       await widget.app.checkApiReadiness();
       await widget.app.auth.sendOtp(widget.phone);
       if (mounted) {
-        setState(() => _requestStatus = 'New code request accepted');
+        setState(() => _requestStatus = 'Supabase accepted a new code request');
       }
     } catch (error) {
       if (mounted) setState(() => _error = _authError(error, sending: true));
@@ -563,7 +563,7 @@ class _OtpScreenState extends State<OtpScreen> {
                   ),
                   const SizedBox(height: 9),
                   Text(
-                      'SMS delivery can take a moment. Wait before requesting another code.',
+                      'SMS delivery to your device is not confirmed. Wait before requesting another code.',
                       style: Theme.of(context).textTheme.bodySmall),
                   const SizedBox(height: 18),
                   TextField(

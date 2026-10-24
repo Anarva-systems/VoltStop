@@ -158,6 +158,7 @@ export function useVendorQuery<T>(path: string, token: string | null, scope: "ve
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
   const reload = () => setVersion((value) => value + 1);
   useEffect(() => {
@@ -176,15 +177,19 @@ export function useVendorQuery<T>(path: string, token: string | null, scope: "ve
   }, [data, error, path, token]);
   useEffect(() => {
     let live = true;
-    if (!token) { setData(null); setError(null); setLoading(false); return () => { live = false; }; }
+    if (!token) { setData(null); setError(null); setErrorCode(null); setLoading(false); return () => { live = false; }; }
     if (version === 0) setLoading(true);
     setError(null);
+    setErrorCode(null);
     (scope === "user" ? userApi<T>(path, token) : apiGet<T>(path, token)).then((result) => { if (live) setData(result); }).catch((reason: unknown) => {
-      if (live) setError(reason instanceof Error ? reason.message : "Request failed.");
+      if (live) {
+        setError(reason instanceof Error ? reason.message : "Request failed.");
+        setErrorCode((reason as { code?: string } | null)?.code ?? null);
+      }
     }).finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
   }, [path, scope, token, version]);
-  return useMemo(() => ({ data, loading, error, reload, setData }), [data, error, loading, version]);
+  return useMemo(() => ({ data, loading, error, errorCode, reload, setData }), [data, error, errorCode, loading, version]);
 }
 
 export function useAccessToken() {
@@ -221,4 +226,43 @@ export function ToastViewport() {
     return () => window.removeEventListener("voltstop-toast", handler);
   }, []);
   return message ? <div role="status" className="toast-message"><span className="toast-check"><Icon name="check" size={15}/></span>{message}</div> : null;
+}
+
+export function DialogEscapeBridge() {
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      const backdrops = document.querySelectorAll<HTMLElement>(".modal-backdrop, .admin-modal-backdrop");
+      const top = backdrops[backdrops.length - 1];
+      if (!top) return;
+      const closer = top.querySelector<HTMLButtonElement>("[data-dialog-close], .close-button, .admin-modal-close");
+      if (!closer || closer.disabled) return;
+      event.preventDefault();
+      closer.click();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+  return null;
+}
+
+export function ConfirmDialog({ title, description, confirmLabel, cancelLabel = "Cancel", busy, tone = "primary", onClose, onConfirm }: {
+  title: string; description: React.ReactNode; confirmLabel: string; cancelLabel?: string;
+  busy?: boolean; tone?: "primary" | "danger"; onClose: () => void; onConfirm: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !busy) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onClose]);
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
+    <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title" style={{ maxWidth: 460 }}>
+      <div className="modal-head"><div><h2 id="confirm-title">{title}</h2></div><button type="button" className="close-button" aria-label="Close" onClick={onClose} disabled={busy}><Icon name="close"/></button></div>
+      <div className="page-description">{description}</div>
+      <div className="form-actions">
+        <Button type="button" variant="secondary" onClick={onClose} disabled={busy}>{cancelLabel}</Button>
+        <Button type="button" variant={tone === "danger" ? "danger" : "primary"} onClick={onConfirm} disabled={busy} autoFocus>{busy ? "Working…" : confirmLabel}</Button>
+      </div>
+    </div>
+  </div>;
 }

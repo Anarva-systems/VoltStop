@@ -930,7 +930,7 @@ class _DriverTripFormScreenState extends State<DriverTripFormScreen> {
             ),
             if (_error != null) ...[
               const SizedBox(height: 12),
-              Text(_error!, style: const TextStyle(color: VoltColors.red)),
+              VoltInlineError(message: _error!),
             ],
             const SizedBox(height: 16),
             VoltButton(
@@ -1077,7 +1077,7 @@ class _DriverTripDetailsScreenState extends State<DriverTripDetailsScreen> {
                               style: Theme.of(context).textTheme.titleLarge,
                             ),
                           ),
-                          _TripStatusBadge(status: trip.status),
+                          VoltStatusPill(status: trip.status),
                         ],
                       ),
                       const SizedBox(height: 16),
@@ -1265,7 +1265,7 @@ class _DriverTripCard extends StatelessWidget {
                       child: Text('${trip.origin} → ${trip.destination}',
                           style: Theme.of(context).textTheme.titleMedium),
                     ),
-                    _TripStatusBadge(status: trip.status),
+                    VoltStatusPill(status: trip.status),
                   ],
                 ),
                 const SizedBox(height: 8),
@@ -1283,37 +1283,6 @@ class _DriverTripCard extends StatelessWidget {
           ),
         ),
       );
-}
-
-class _TripStatusBadge extends StatelessWidget {
-  const _TripStatusBadge({required this.status});
-  final String status;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = switch (status) {
-      'in_progress' => VoltColors.warning,
-      'completed' => VoltColors.forest,
-      'cancelled' => VoltColors.red,
-      _ => VoltColors.muted,
-    };
-    final label = switch (status) {
-      'in_progress' => 'In progress',
-      'completed' => 'Completed',
-      'cancelled' => 'Cancelled',
-      _ => 'Scheduled',
-    };
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: .1),
-        borderRadius: BorderRadius.circular(30),
-      ),
-      child: Text(label,
-          style: TextStyle(
-              color: color, fontSize: 12, fontWeight: FontWeight.w700)),
-    );
-  }
 }
 
 class _DateTimePickerTile extends StatelessWidget {
@@ -1343,11 +1312,12 @@ Widget _detailRow(String title, String value) => Padding(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 132,
+          Flexible(
+            flex: 2,
             child: Text(title, style: const TextStyle(color: VoltColors.muted)),
           ),
-          Expanded(child: Text(value)),
+          const SizedBox(width: 12),
+          Expanded(flex: 3, child: Text(value)),
         ],
       ),
     );

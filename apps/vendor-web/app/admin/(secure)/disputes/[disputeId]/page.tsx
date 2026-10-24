@@ -56,4 +56,4 @@ export default function DisputeDetailPage(){
   </>;
 }
 
-function SelectAction({value,onChange}:{value:string;onChange:(value:string)=>void}){return <FilterSelect value={value} onChange={(event)=>onChange(event.target.value)}>{[["investigate","Move to investigating"],["await_customer","Request customer information"],["await_vendor","Request vendor information"],["note","Add admin note"],["escalate","Escalate"],["resolve","Resolve"],["close","Close"],["reject","Reject and close"]].map(([key,label])=><option key={key} value={key}>{label}</option>)}</FilterSelect>;}
+function SelectAction({value,onChange}:{value:string;onChange:(value:string)=>void}){return <FilterSelect aria-label="Dispute status" value={value} onChange={(event)=>onChange(event.target.value)}>{[["investigate","Move to investigating"],["await_customer","Request customer information"],["await_vendor","Request vendor information"],["note","Add admin note"],["escalate","Escalate"],["resolve","Resolve"],["close","Close"],["reject","Reject and close"]].map(([key,label])=><option key={key} value={key}>{label}</option>)}</FilterSelect>;}

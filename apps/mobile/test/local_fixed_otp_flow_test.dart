@@ -131,7 +131,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
 
       expect(auth.requestedPhones, [phone]);
-      expect(find.text('Request accepted'), findsOneWidget);
+      expect(find.textContaining('Request accepted'), findsOneWidget);
       expect(find.text('OTP sent'), findsNothing);
       expect(
         find.textContaining('SMS delivery to your device is not confirmed'),
@@ -184,6 +184,11 @@ void main() {
       await tester.tap(find.text('Profile'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
+      await tester.scrollUntilVisible(
+        find.text('Sign out'),
+        250,
+        scrollable: find.byType(Scrollable).first,
+      );
       await tester.tap(find.text('Sign out'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));

@@ -65,7 +65,7 @@ export default function HomePage() {
         </div>
       </header>
 
-      <section className="public-hero" id="corridor">
+      <section className="public-hero">
         <div className="public-hero-copy">
           <div className="public-eyebrow"><span /> ANDHRA PRADESH · NH-16</div>
           <h1>Go farther.<br /><em>Pause better.</em></h1>

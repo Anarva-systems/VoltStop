@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useVendorAuth } from "@/components/vendor-auth";
 import { adminGet } from "@/services/admin-api";
-import { Button, FullPageLoading, Icon } from "@/components/portal";
+import { Button, DialogEscapeBridge, FullPageLoading, Icon } from "@/components/portal";
 import { AdminToastHost } from "@/components/admin-ui";
 
 type AdminIdentity = { user_id: string; email: string | null; role: string; permissions: string[] };
@@ -84,6 +84,6 @@ function AdminShell({ identity, children }: { identity: AdminIdentity; children:
     </aside>
     <div className="admin-main"><header className="admin-topbar"><button className="admin-menu" aria-label="Open menu" onClick={() => setNavOpen(true)}><Icon name="grid"/></button><div className="admin-crumb">VoltStop <span>/</span> <strong>{title}</strong></div>
       <div className="admin-header-tools"><form className="admin-global-search" onSubmit={globalSearch}><Icon name="search" size={16}/><input aria-label="Search bookings" placeholder="Search bookings or customers" value={search} onChange={(event) => setSearch(event.target.value)}/><kbd>↵</kbd></form><span className="admin-role-chip">{identity.role.replaceAll("_", " ")}</span><div className="admin-profile"><span>{initials}</span><div><strong>{identity.email ?? "Administrator"}</strong><small>{identity.role.replaceAll("_", " ")}</small></div></div><button className="admin-logout" onClick={logout} aria-label="Sign out"><Icon name="logout" size={17}/></button></div>
-    </header><main className="admin-content">{children}</main><footer className="admin-footer"><span>VoltStop internal operations</span><span>Administrative actions are recorded</span></footer><AdminToastHost/></div>
+    </header><main className="admin-content">{children}</main><footer className="admin-footer"><span>VoltStop internal operations</span><span>Administrative actions are recorded</span></footer><AdminToastHost/><DialogEscapeBridge/></div>
   </div>;
 }

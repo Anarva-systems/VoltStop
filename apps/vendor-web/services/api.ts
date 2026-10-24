@@ -47,8 +47,9 @@ export async function vendorApi<T>(path: string, token: string, init: RequestIni
   const body = (await response.json().catch(() => null)) as ApiSuccess<T> | ApiFailure | null;
   if (!response.ok || !body || !body.success) {
     const message = responseErrorMessage(response, body, `/vendor${path}`);
-    const error = new Error(message) as Error & { status?: number };
+    const error = new Error(message) as Error & { status?: number; code?: string };
     error.status = response.status;
+    if (body && !body.success) error.code = body.error.code;
     throw error;
   }
   return body.data;
@@ -66,7 +67,10 @@ export async function userApi<T>(path: string, token: string, init: RequestInit 
   const body = (await response.json().catch(() => null)) as ApiSuccess<T> | ApiFailure | null;
   if (!response.ok || !body || !body.success) {
     const message = responseErrorMessage(response, body, path);
-    const error = new Error(message) as Error & { status?: number }; error.status = response.status; throw error;
+    const error = new Error(message) as Error & { status?: number; code?: string };
+    error.status = response.status;
+    if (body && !body.success) error.code = body.error.code;
+    throw error;
   }
   return body.data;
 }

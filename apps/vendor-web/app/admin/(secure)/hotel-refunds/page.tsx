@@ -36,19 +36,19 @@ export default function HotelRefundsPage() {
   return <>
     <AdminPage title="Hotel cancellation refunds" description="Customer cancellations are reviewed separately. The server verifies captured payment and amount, then waits for Razorpay webhook confirmation before marking a refund complete."/>
     <AdminCard>
-      <div className="admin-toolbar"><FilterSelect value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All hotel refund states</option>{["requested", "approved", "processing", "completed", "failed", "rejected"].map((item) => <option key={item}>{item}</option>)}</FilterSelect></div>
+      <div className="admin-toolbar"><FilterSelect aria-label="All hotel refund states" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All hotel refund states</option>{["requested", "approved", "processing", "completed", "failed", "rejected"].map((item) => <option key={item}>{item}</option>)}</FilterSelect></div>
       <AdminLoad loading={query.loading} error={query.error} data={query.data} retry={query.reload} empty={Boolean(query.data && !query.data.items.length)} emptyTitle="No hotel refund requests">
         {(data) => <AdminTable headers={["Request", "Reservation", "Hotel / room", "Stay", "Customer", "Amount", "State", "Provider", "Created", "Action"]}>{data.items.map((row) => <tr key={row.id}>
           <td className="primary-cell">{row.id.slice(0, 12)}…</td><td>{row.reservation_id.slice(0, 12)}…<small style={{ display: "block" }}>{row.reservation_status}</small></td>
           <td>{row.vendor_name}<small style={{ display: "block" }}>{row.room_name}</small></td><td>{formatAdminDate(row.check_in)} – {formatAdminDate(row.check_out)}</td>
           <td>{row.customer_id.slice(0, 12)}…</td><td>{formatAdminMoney(row.amount_inr)}</td><td><StateBadge value={row.status}/></td>
-          <td>{row.provider_status ?? "Awaiting finance"}{row.provider_error && <small style={{ display: "block", color: "#f6c453" }}>Needs reconciliation</small>}</td>
+          <td>{row.provider_status ?? "Awaiting finance"}{row.provider_error && <small className="cell-flag">Needs reconciliation</small>}</td>
           <td>{formatAdminDate(row.created_at, true)}</td><td>{row.status === "requested" && canApprove ? <div className="admin-toolbar"><AdminButton onClick={() => { setDecision({ refund: row, action: "approve" }); setReason(""); }}>Approve &amp; issue</AdminButton><AdminButton variant="danger" onClick={() => { setDecision({ refund: row, action: "reject" }); setReason(""); }}>Reject</AdminButton></div> : "—"}</td>
         </tr>)}</AdminTable>}
       </AdminLoad>
     </AdminCard>
-    {decision && <div className="admin-modal-backdrop"><form className="admin-modal" onSubmit={decide} role="dialog" aria-modal="true">
-      <div className="admin-modal-head"><h2>{decision.action === "approve" ? "Approve hotel refund" : "Reject hotel refund"}</h2><button type="button" className="admin-modal-close" onClick={() => setDecision(null)}>×</button></div>
+    {decision && <div className="admin-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setDecision(null); }}><form className="admin-modal" onSubmit={decide} role="dialog" aria-modal="true">
+      <div className="admin-modal-head"><h2>{decision.action === "approve" ? "Approve hotel refund" : "Reject hotel refund"}</h2><button type="button" className="admin-modal-close" aria-label="Close dialog" onClick={() => setDecision(null)}>×</button></div>
       <p>{decision.action === "approve" ? "The backend checks the verified captured payment and refundable amount before submitting the refund. Unknown provider responses require reconciliation." : "This rejects the request. No payment provider call will be made."}</p>
       <div className="admin-callout">{formatAdminMoney(decision.refund.amount_inr)} · {decision.refund.vendor_name} · {decision.refund.room_name}<br/>Reservation {decision.refund.reservation_id.slice(0, 12)}… · payment {decision.refund.payment_status} · webhook verified: {decision.refund.webhook_verified ? "yes" : "no"}</div>
       <label className="admin-reason">Finance decision reason<textarea className="admin-filter" required minLength={8} maxLength={1000} value={reason} onChange={(event) => setReason(event.target.value)} /></label>

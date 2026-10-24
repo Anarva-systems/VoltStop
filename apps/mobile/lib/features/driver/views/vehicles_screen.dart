@@ -99,32 +99,29 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
         body: RefreshIndicator(
           onRefresh: _refresh,
           child: ListView(padding: const EdgeInsets.all(18), children: [
-            const Text('Saved vehicles',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 5),
-            const Text(
-                'Choose the default vehicle used for route energy estimates. Charge is saved separately for each vehicle.',
-                style: TextStyle(color: VoltColors.muted)),
+            const VoltPageHeading(
+              eyebrow: 'Garage',
+              title: 'Saved vehicles',
+              subtitle:
+                  'Choose the default vehicle used for route energy estimates. Charge is saved separately for each vehicle.',
+            ),
             if (_loading) const LinearProgressIndicator(),
             if (_error != null)
               Padding(
                   padding: const EdgeInsets.only(top: 12),
-                  child: Text(_error!,
-                      style: const TextStyle(color: VoltColors.warning))),
+                  child: VoltInlineError(message: _error!)),
             if (!_loading && widget.app.vehicles.isEmpty)
               Padding(
                   padding: const EdgeInsets.only(top: 18),
-                  child: VoltCard(
-                      child: Column(children: [
-                    const Icon(Icons.electric_car_outlined,
-                        color: VoltColors.green, size: 36),
-                    const SizedBox(height: 8),
-                    const Text('No saved vehicles yet.'),
-                    const SizedBox(height: 8),
-                    OutlinedButton(
+                  child: VoltEmptyState(
+                    icon: Icons.electric_car_outlined,
+                    title: 'No saved vehicles yet.',
+                    description:
+                        'Add your EV to personalize range and charging estimates.',
+                    action: OutlinedButton(
                         onPressed: () => _edit(),
                         child: const Text('Add your first vehicle')),
-                  ]))),
+                  )),
             ...widget.app.vehicles.map((vehicle) => Padding(
                   padding: const EdgeInsets.only(top: 12),
                   child: VoltCard(
@@ -132,15 +129,14 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                         Row(children: [
-                          const Icon(Icons.electric_car,
-                              color: VoltColors.green),
-                          const SizedBox(width: 10),
+                          const VoltIconBadge(icon: Icons.electric_car),
+                          const SizedBox(width: 12),
                           Expanded(
                               child: Text(vehicle.displayName,
                                   style:
                                       Theme.of(context).textTheme.titleMedium)),
                           if (vehicle.isDefault)
-                            const Chip(label: Text('Default')),
+                            const VoltStatusPill(status: 'Default'),
                         ]),
                         const SizedBox(height: 8),
                         _line('Type', vehicle.vehicleType),
@@ -371,8 +367,7 @@ class _VehicleDialogState extends State<_VehicleDialog> {
               if (_error != null)
                 Align(
                     alignment: Alignment.centerLeft,
-                    child: Text(_error!,
-                        style: const TextStyle(color: VoltColors.warning))),
+                    child: VoltInlineError(message: _error!)),
             ]))),
         actions: [
           TextButton(

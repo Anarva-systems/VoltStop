@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { apiPost } from "@/services/api";
-import { Button, EmptyState, ErrorState, formatDate, formatMoney, formatTime, Icon, Panel, Skeleton, StatePill, toast, useVendorQuery } from "@/components/portal";
+import { Button, ConfirmDialog, EmptyState, ErrorState, formatDate, formatMoney, formatTime, Icon, Panel, Skeleton, StatePill, toast, useVendorQuery } from "@/components/portal";
 import type { VendorBooking } from "@/types/vendor";
 
 export function VendorBookingsTable({ token, onlyRequests = false }: { token: string | null; onlyRequests?: boolean }) {
@@ -11,6 +11,7 @@ export function VendorBookingsTable({ token, onlyRequests = false }: { token: st
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
   const [busy, setBusy] = useState("");
+  const [confirmId, setConfirmId] = useState<string | null>(null);
   const filtered = useMemo(() => (bookings.data ?? []).filter((booking) => {
     const requestMatches = !onlyRequests || (booking.status === "confirmed" && booking.vendor_acknowledgement === "pending" && booking.payment_status === "captured" && booking.webhook_verified);
     const statusMatches = status === "all" || booking.status === status;
@@ -21,7 +22,7 @@ export function VendorBookingsTable({ token, onlyRequests = false }: { token: st
   async function accept(bookingId: string) {
     if (!token) return;
     setBusy(bookingId);
-    try { await apiPost(`/bookings/${bookingId}/accept`, token); bookings.reload(); }
+    try { await apiPost(`/bookings/${bookingId}/accept`, token); setConfirmId(null); bookings.reload(); }
     catch (reason) { toast(reason instanceof Error ? reason.message : "Could not accept booking"); }
     finally { setBusy(""); }
   }
@@ -33,7 +34,7 @@ export function VendorBookingsTable({ token, onlyRequests = false }: { token: st
     <div className="table-toolbar">
       <label className="search-box"><Icon name="search" size={16}/><input aria-label="Search bookings" placeholder="Search ID, customer, vehicle…" value={query} onChange={(event) => setQuery(event.target.value)}/></label>
       <div className="filter-row">
-        {!onlyRequests && <select className="select-control" style={{ width: "auto", minWidth: 145 }} aria-label="Filter by booking status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option><option value="pending">Pending payment</option><option value="confirmed">Confirmed</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option><option value="expired">Expired</option></select>}
+        {!onlyRequests && <select className="select-control select-inline" aria-label="Filter by booking status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option><option value="pending">Pending payment</option><option value="confirmed">Confirmed</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option><option value="expired">Expired</option></select>}
         <Button variant="secondary" onClick={bookings.reload}><Icon name="refresh"/>Refresh</Button>
       </div>
     </div>
@@ -47,8 +48,16 @@ export function VendorBookingsTable({ token, onlyRequests = false }: { token: st
         <td>{booking.service_name}</td>
         <td className="table-primary">{formatMoney(booking.charged_amount_inr ?? booking.amount_inr)}</td>
         <td><StatePill value={booking.vendor_acknowledgement === "accepted" && booking.status === "confirmed" ? "accepted" : booking.status}/></td>
-        <td><div className="table-actions"><Link className="action-link" href={`/vendor/bookings/${booking.booking_id}`}>View <Icon name="arrow" size={13}/></Link>{onlyRequests && <Button disabled={busy === booking.booking_id} onClick={() => accept(booking.booking_id)}>{busy === booking.booking_id ? "Saving…" : "Accept"}</Button>}</div></td>
+        <td><div className="table-actions"><Link className="action-link" href={`/vendor/bookings/${booking.booking_id}`}>View <Icon name="arrow" size={13}/></Link>{onlyRequests && <Button disabled={busy === booking.booking_id} onClick={() => setConfirmId(booking.booking_id)}>Accept</Button>}</div></td>
       </tr>)}</tbody></table></div>}
-    <div className="table-toolbar" style={{ borderTop: "1px solid var(--line)", color: "var(--muted)", fontSize: 10 }}>{filtered.length} {filtered.length === 1 ? "booking" : "bookings"}<span>Customer details are limited to bookings for your business.</span></div>
+    <div className="table-toolbar table-footnote">{filtered.length} {filtered.length === 1 ? "booking" : "bookings"}<span>Customer details are limited to bookings for your business.</span></div>
+    {confirmId && <ConfirmDialog
+      title="Accept this booking?"
+      description={<>Confirm that your team will honour reservation <strong>{confirmId.slice(0, 8).toUpperCase()}</strong>. This marks the paid booking as acknowledged.</>}
+      confirmLabel="Accept booking"
+      busy={busy === confirmId}
+      onClose={() => setConfirmId(null)}
+      onConfirm={() => accept(confirmId)}
+    />}
   </Panel>;
 }

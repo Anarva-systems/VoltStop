@@ -175,8 +175,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
         if (_error != null)
           Padding(
               padding: const EdgeInsets.only(top: 12),
-              child:
-                  Text(_error!, style: const TextStyle(color: VoltColors.red))),
+              child: VoltInlineError(message: _error!)),
         const SizedBox(height: 20),
         SizedBox(
             width: double.infinity,
@@ -197,9 +196,11 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
 }
 
 class DriverShell extends StatefulWidget {
-  const DriverShell({super.key, required this.app, this.initialIndex = 0});
+  const DriverShell(
+      {super.key, required this.app, this.initialIndex = 0, this.clock});
   final AppController app;
   final int initialIndex;
+  final DateTime Function()? clock;
   @override
   State<DriverShell> createState() => _DriverShellState();
 }
@@ -216,7 +217,10 @@ class _DriverShellState extends State<DriverShell> {
   @override
   Widget build(BuildContext context) {
     final pages = [
-      HomeScreen(app: widget.app, onExplore: () => setState(() => _index = 1)),
+      HomeScreen(
+          app: widget.app,
+          clock: widget.clock,
+          onExplore: () => setState(() => _index = 1)),
       DiscoveryScreen(app: widget.app, isActive: _index == 1),
       DriverTripsScreen(
         app: widget.app,
@@ -532,7 +536,9 @@ class _JourneyRoutePainter extends CustomPainter {
 }
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.app, required this.onExplore});
+  const HomeScreen(
+      {super.key, required this.app, required this.onExplore, this.clock});
+  final DateTime Function()? clock;
   final AppController app;
   final VoidCallback onExplore;
   @override
@@ -558,7 +564,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _departureAt = DateTime.now().add(const Duration(minutes: 10));
+    _departureAt = (widget.clock?.call() ?? DateTime.now())
+        .add(const Duration(minutes: 10));
     _soc =
         widget.app.activeVehicle?.currentSoc ?? widget.app.profile?.currentSoc;
     _load();
@@ -1029,20 +1036,53 @@ class _HomeScreenState extends State<HomeScreen> {
                   'No upcoming reservations. Choose a pitstop to reserve a charging slot.',
                   style: TextStyle(color: VoltColors.muted)));
         final booking = list.first;
-        return ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const CircleAvatar(
-                backgroundColor: VoltColors.elevated,
-                child: Icon(Icons.ev_station, color: VoltColors.green)),
-            title: Text(
-                'Reservation ${booking.id.substring(0, booking.id.length.clamp(0, 8).toInt())}'),
-            subtitle: Text('Status: ${booking.status}'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (_) => BookingDetailsScreen(
-                        app: widget.app, booking: booking))));
+        return VoltCard(
+            padding: EdgeInsets.zero,
+            child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                    borderRadius: BorderRadius.circular(VoltRadii.card),
+                    onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => BookingDetailsScreen(
+                                app: widget.app, booking: booking))),
+                    child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Row(children: [
+                          VoltIconBadge(icon: Icons.ev_station, size: 38),
+                          const SizedBox(width: 11),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  booking.vendorName ?? 'Highway pitstop',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 14),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  booking.slotStartTime == null
+                                      ? 'Time to be confirmed'
+                                      : '${booking.slotStartTime!.day}/${booking.slotStartTime!.month}/${booking.slotStartTime!.year} · ${_time(booking.slotStartTime)}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      color: VoltColors.muted, fontSize: 11),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          VoltStatusPill(status: booking.status, compact: true),
+                          const SizedBox(width: 4),
+                          const Icon(Icons.chevron_right_rounded,
+                              color: VoltColors.muted, size: 20),
+                        ])))));
       });
   void _openVendor(BuildContext context, Pitstop vendor) => Navigator.push(
       context,
@@ -1294,9 +1334,10 @@ class PitstopCard extends StatelessWidget {
                               label: vendor.isVerified == true
                                   ? 'Verified partner'
                                   : 'Partner listing'),
-                          if (isCharging)
-                            const _ServiceChip(
-                                label: 'Live connector status unavailable'),
+                          _ServiceChip(
+                              label: vendor.availableSlotCount > 0
+                                  ? '${vendor.availableSlotCount} slots listed'
+                                  : 'Booking by time slot'),
                         ]),
                         const SizedBox(height: 12),
                         Wrap(
@@ -1312,18 +1353,7 @@ class PitstopCard extends StatelessWidget {
                                         label: _serviceName(
                                             '${s['service_type'] ?? 'service'}')))
                                     .toList()),
-                        const SizedBox(height: 10),
-                        Row(children: [
-                          const Icon(Icons.schedule_rounded,
-                              size: 15, color: VoltColors.muted),
-                          const SizedBox(width: 5),
-                          Text(
-                              vendor.availableSlotCount > 0
-                                  ? '${vendor.availableSlotCount} booking slots listed'
-                                  : 'Booking times shown in details',
-                              style: const TextStyle(
-                                  color: VoltColors.muted, fontSize: 12))
-                        ]),
+                        const SizedBox(height: 4),
                         if (isCharging)
                           const Padding(
                             padding: EdgeInsets.only(top: 5),
@@ -1881,8 +1911,7 @@ class _DiscoveryScreenState extends State<DiscoveryScreen>
                   onChanged: (value) => setState(() => _query = value),
                   decoration: const InputDecoration(
                       prefixIcon: Icon(Icons.search),
-                      hintText: 'Search pitstops, food, stays…',
-                      suffixIcon: Icon(Icons.tune))),
+                      hintText: 'Search pitstops, food, stays…')),
               const SizedBox(height: 12),
               SizedBox(
                   height: 42,
@@ -2263,144 +2292,184 @@ class _PitstopDetailsScreenState extends State<PitstopDetailsScreen> {
                     return service.contains('charg') || service == 'ev';
                   }).toList()
                 : slots;
-            return ListView(
-                padding: const EdgeInsets.fromLTRB(18, 4, 18, 100),
-                children: [
-                  if (vendor.imageUrl != null &&
-                      vendor.imageUrl!.startsWith('http'))
-                    ClipRRect(
-                        borderRadius: BorderRadius.circular(18),
-                        child: Image.network(vendor.imageUrl!,
-                            height: 210,
-                            width: double.infinity,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => _vendorImage(vendor)))
-                  else
-                    _vendorImage(vendor),
-                  const SizedBox(height: 14),
-                  Row(children: [
-                    Expanded(
-                        child: Text(vendor.name,
-                            style: Theme.of(context)
-                                .textTheme
-                                .headlineSmall
-                                ?.copyWith(fontWeight: FontWeight.w900))),
-                    if (vendor.isVerified == true)
-                      const Icon(Icons.verified, color: VoltColors.green)
-                  ]),
-                  const SizedBox(height: 6),
-                  Text(vendor.address,
-                      style: const TextStyle(color: VoltColors.muted)),
-                  const SizedBox(height: 8),
-                  Wrap(spacing: 8, children: [
-                    Chip(label: Text(_serviceName(vendor.type))),
-                    if (vendor.isVerified == true)
-                      const Chip(
-                          avatar: Icon(Icons.verified,
-                              color: VoltColors.green, size: 16),
-                          label: Text('Verified'))
-                  ]),
-                  const SizedBox(height: 18),
-                  if (vendor.type.toLowerCase() == 'hotel') ...[
-                    SizedBox(
-                        width: double.infinity,
-                        child: FilledButton.icon(
-                            onPressed: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                    builder: (_) => HotelBookingScreen(
-                                        app: widget.app, vendor: vendor))),
-                            icon: const Icon(Icons.hotel_rounded),
-                            label:
-                                const Text('Choose dates & reserve a room'))),
+            final Widget? bottomAction;
+            if (vendor.type.toLowerCase() == 'hotel') {
+              bottomAction = FilledButton.icon(
+                  onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => HotelBookingScreen(
+                              app: widget.app, vendor: vendor))),
+                  icon: const Icon(Icons.hotel_rounded),
+                  label: const Text('Choose dates & reserve a room'));
+            } else if (vendor.type.toLowerCase() == 'restaurant') {
+              bottomAction = FilledButton.icon(
+                onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => RestaurantMenuScreen(
+                            app: widget.app, vendor: vendor))),
+                icon: const Icon(Icons.restaurant_menu_rounded),
+                label: const Text('Browse menu & order'),
+              );
+            } else if (customerSlots.isNotEmpty) {
+              bottomAction = FilledButton.icon(
+                  onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => SlotSelectionScreen(
+                              app: widget.app,
+                              vendor: vendor,
+                              slots: customerSlots))),
+                  icon: const Icon(Icons.schedule),
+                  label: const Text('Select a slot'));
+            } else {
+              bottomAction = null;
+            }
+            return Column(children: [
+              Expanded(
+                  child: ListView(
+                      padding: EdgeInsets.fromLTRB(
+                          18, 4, 18, bottomAction == null ? 32 : 12),
+                      children: [
+                    if (vendor.imageUrl != null &&
+                        vendor.imageUrl!.startsWith('http'))
+                      ClipRRect(
+                          borderRadius: BorderRadius.circular(18),
+                          child: Image.network(vendor.imageUrl!,
+                              height: 210,
+                              width: double.infinity,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) =>
+                                  _vendorImage(vendor)))
+                    else
+                      _vendorImage(vendor),
+                    const SizedBox(height: 14),
+                    Row(children: [
+                      Expanded(
+                          child: Text(vendor.name,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .headlineSmall
+                                  ?.copyWith(fontWeight: FontWeight.w900))),
+                      if (vendor.isVerified == true)
+                        const Icon(Icons.verified, color: VoltColors.green)
+                    ]),
+                    const SizedBox(height: 6),
+                    Text(vendor.address,
+                        style: const TextStyle(color: VoltColors.muted)),
+                    const SizedBox(height: 8),
+                    Wrap(spacing: 8, children: [
+                      _ServiceChip(label: _serviceName(vendor.type)),
+                      if (vendor.isVerified == true)
+                        Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 9, vertical: 6),
+                            decoration: BoxDecoration(
+                                color: VoltColors.lime.withValues(alpha: .34),
+                                borderRadius: BorderRadius.circular(7),
+                                border: Border.all(
+                                    color: VoltColors.forest
+                                        .withValues(alpha: .22))),
+                            child:
+                                Row(mainAxisSize: MainAxisSize.min, children: [
+                              const Icon(Icons.verified,
+                                  color: VoltColors.forest, size: 13),
+                              const SizedBox(width: 5),
+                              Text('Verified',
+                                  style: const TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: VoltColors.forest)),
+                            ])),
+                    ]),
                     const SizedBox(height: 18),
-                  ],
-                  if (vendor.type.toLowerCase() == 'restaurant') ...[
-                    SizedBox(
-                        width: double.infinity,
-                        child: FilledButton.icon(
-                          onPressed: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (_) => RestaurantMenuScreen(
-                                      app: widget.app, vendor: vendor))),
-                          icon: const Icon(Icons.restaurant_menu_rounded),
-                          label: const Text('Browse menu & order'),
-                        )),
-                    const SizedBox(height: 18),
-                  ],
-                  const Text('Services offered',
-                      style:
-                          TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
-                  const SizedBox(height: 10),
-                  VoltCard(
-                      child: vendor.services.isEmpty
-                          ? const Text(
-                              'No service details have been published.',
-                              style: TextStyle(color: VoltColors.muted))
-                          : Column(
-                              children: vendor.services
-                                  .map((s) => ListTile(
-                                      contentPadding: EdgeInsets.zero,
-                                      leading: Icon(
-                                          _serviceIcon(
-                                              '${s['service_type'] ?? ''}'),
-                                          color: _serviceIcon(
-                                                      '${s['service_type'] ?? ''}') ==
-                                                  Icons.hotel_rounded
-                                              ? VoltColors.cyan
-                                              : VoltColors.green),
-                                      title: Text(_serviceName(
-                                          '${s['service_type'] ?? 'Service'}')),
-                                      trailing: Text(
-                                          s['price_inr'] == null
-                                              ? 'Price not listed'
-                                              : '₹${s['price_inr']}',
-                                          style: const TextStyle(
-                                              color: VoltColors.green,
-                                              fontWeight: FontWeight.w700))))
-                                  .toList())),
-                  if (vendor.description?.isNotEmpty ?? false) ...[
-                    const SizedBox(height: 16),
-                    const Text('About',
+                    const Text('Services offered',
                         style: TextStyle(
                             fontWeight: FontWeight.w800, fontSize: 17)),
-                    const SizedBox(height: 8),
-                    Text(vendor.description!,
-                        style: const TextStyle(color: VoltColors.muted))
-                  ],
-                  if (customerSlots.isNotEmpty) ...[
-                  const SizedBox(height: 20),
-                  Row(children: [
-                    const Expanded(
-                        child: Text('Available time slots',
-                            style: TextStyle(
-                                fontWeight: FontWeight.w800, fontSize: 17))),
-                    Text('${customerSlots.length} available',
-                        style: const TextStyle(color: VoltColors.green))
-                  ]),
-                  const SizedBox(height: 10),
-                  ...customerSlots.take(3).map((slot) => Padding(
-                        padding: const EdgeInsets.only(bottom: 9),
-                        child: _SlotTile(
-                            slot: slot, showSelect: false, onSelect: () {}))),
-                  if (customerSlots.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    SizedBox(
-                        width: double.infinity,
-                        child: FilledButton.icon(
-                            onPressed: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                    builder: (_) => SlotSelectionScreen(
-                                        app: widget.app,
-                                        vendor: vendor,
-                                        slots: customerSlots))),
-                            icon: const Icon(Icons.schedule),
-                            label: const Text('Select Slot')))
-                  ],
-                  ],
-                ]);
+                    const SizedBox(height: 10),
+                    VoltCard(
+                        padding: EdgeInsets.zero,
+                        child: vendor.services.isEmpty
+                            ? const Padding(
+                                padding: EdgeInsets.all(16),
+                                child: Text(
+                                    'No service details have been published.',
+                                    style: TextStyle(color: VoltColors.muted)))
+                            : Column(
+                                children: vendor.services.map((s) {
+                                  final icon = _serviceIcon(
+                                      '${s['service_type'] ?? ''}');
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 14, vertical: 12),
+                                    child: Row(children: [
+                                      VoltIconBadge(icon: icon, size: 36),
+                                      const SizedBox(width: 11),
+                                      Expanded(
+                                        child: Text(
+                                          _serviceName(
+                                              '${s['service_type'] ?? 'Service'}'),
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 13),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        s['price_inr'] == null
+                                            ? 'Price not listed'
+                                            : '₹${s['price_inr']}',
+                                        style: const TextStyle(
+                                            color: VoltColors.forest,
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 13),
+                                      ),
+                                    ]),
+                                  );
+                                }).toList(),
+                              )),
+                    if (vendor.description?.isNotEmpty ?? false) ...[
+                      const SizedBox(height: 16),
+                      const Text('About',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w800, fontSize: 17)),
+                      const SizedBox(height: 8),
+                      Text(vendor.description!,
+                          style: const TextStyle(color: VoltColors.muted))
+                    ],
+                    if (customerSlots.isNotEmpty) ...[
+                      const SizedBox(height: 20),
+                      Row(children: [
+                        const Expanded(
+                            child: Text('Available time slots',
+                                style: TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 17))),
+                        Text('${customerSlots.length} available',
+                            style: const TextStyle(color: VoltColors.green))
+                      ]),
+                      const SizedBox(height: 10),
+                      ...customerSlots.take(3).map((slot) => Padding(
+                          padding: const EdgeInsets.only(bottom: 9),
+                          child: _SlotTile(
+                              slot: slot, showSelect: false, onSelect: () {}))),
+                    ],
+                  ])),
+              if (bottomAction != null)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(18, 12, 18, 12),
+                  decoration: BoxDecoration(
+                    color: VoltColors.surface,
+                    border: Border(top: BorderSide(color: VoltColors.border)),
+                  ),
+                  child: SafeArea(
+                      top: false,
+                      child: SizedBox(
+                          width: double.infinity, child: bottomAction)),
+                ),
+            ]);
           }));
 }
 
@@ -2534,7 +2603,8 @@ class _HotelBookingScreenState extends State<HotelBookingScreen> {
                           style: const TextStyle(fontWeight: FontWeight.w800)),
                       Text(
                           '${_dateLabel(_checkIn)} – ${_dateLabel(_checkOut)} · ${quote['nights']} night(s)'),
-                      Text('${_checkInTime.format(context)} arrival · ${_checkOutTime.format(context)} departure'),
+                      Text(
+                          '${_checkInTime.format(context)} arrival · ${_checkOutTime.format(context)} departure'),
                       Text('$_guests guest(s) · $_roomCount room(s)'),
                       const SizedBox(height: 10),
                       ...nightlyRates.map((line) => Padding(
@@ -2719,13 +2789,15 @@ class _HotelBookingScreenState extends State<HotelBookingScreen> {
                         child: OutlinedButton.icon(
                             onPressed: () => _chooseTime(arrival: true),
                             icon: const Icon(Icons.schedule),
-                            label: Text('Arrival · ${_checkInTime.format(context)}'))),
+                            label: Text(
+                                'Arrival · ${_checkInTime.format(context)}'))),
                     const SizedBox(width: 8),
                     Expanded(
                         child: OutlinedButton.icon(
                             onPressed: () => _chooseTime(arrival: false),
                             icon: const Icon(Icons.schedule_outlined),
-                            label: Text('Departure · ${_checkOutTime.format(context)}'))),
+                            label: Text(
+                                'Departure · ${_checkOutTime.format(context)}'))),
                   ]),
                   const SizedBox(height: 8),
                   Row(children: [
@@ -3012,21 +3084,40 @@ class _SlotTile extends StatelessWidget {
     final end = DateTime.tryParse('${slot['slot_end_time']}')?.toLocal();
     final time = '${_time(start)} – ${_time(end)}';
     return VoltCard(
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
         child: Row(children: [
-          const Icon(Icons.schedule, color: VoltColors.cyan),
-          const SizedBox(width: 10),
+          VoltIconBadge(icon: Icons.schedule, size: 36),
+          const SizedBox(width: 11),
           Expanded(
               child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                 Text(time, style: const TextStyle(fontWeight: FontWeight.w800)),
+                const SizedBox(height: 3),
                 Text(
-                    '${start == null ? 'Date to be confirmed' : '${start.day}/${start.month}/${start.year}'} • ${slot['capacity'] ?? 1} capacity • ₹${slot['price_inr'] ?? '—'}',
+                    '${start == null ? 'Date to be confirmed' : '${start.day}/${start.month}/${start.year}'} · ${slot['capacity'] ?? 1} vehicle capacity',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style:
-                        const TextStyle(color: VoltColors.muted, fontSize: 12))
+                        const TextStyle(color: VoltColors.muted, fontSize: 11))
               ])),
-          if (showSelect)
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+            decoration: BoxDecoration(
+              color: VoltColors.lime.withValues(alpha: .32),
+              borderRadius: BorderRadius.circular(VoltRadii.pill),
+            ),
+            child: Text(
+              '₹${slot['price_inr'] ?? '—'}',
+              style: const TextStyle(
+                  color: VoltColors.forest,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12),
+            ),
+          ),
+          if (showSelect) ...[
+            const SizedBox(width: 9),
             FilledButton(
                 onPressed: enabled ? onSelect : null,
                 child: busy
@@ -3035,6 +3126,7 @@ class _SlotTile extends StatelessWidget {
                         height: 18,
                         child: CircularProgressIndicator(strokeWidth: 2))
                     : const Text('Select'))
+          ],
         ]));
   }
 }
@@ -3062,6 +3154,18 @@ String _time(DateTime? value) {
   if (value == null) return 'Time TBA';
   final hour = value.hour % 12 == 0 ? 12 : value.hour % 12;
   return '${hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')} ${value.hour < 12 ? 'AM' : 'PM'}';
+}
+
+String _slotDate(Map<String, dynamic> slot) {
+  final start = DateTime.tryParse('${slot['slot_start_time']}')?.toLocal();
+  if (start == null) return 'Date to be confirmed';
+  return '${start.day}/${start.month}/${start.year}';
+}
+
+String _slotTime(Map<String, dynamic> slot) {
+  final start = DateTime.tryParse('${slot['slot_start_time']}')?.toLocal();
+  final end = DateTime.tryParse('${slot['slot_end_time']}')?.toLocal();
+  return '${_time(start)} – ${_time(end)}';
 }
 
 class BookingReviewScreen extends StatefulWidget {
@@ -3430,68 +3534,141 @@ class _PaymentScreenState extends State<PaymentScreen> {
   Widget build(BuildContext context) => Scaffold(
       appBar: AppBar(title: const Text('Secure payment')),
       body: Center(
-          child: Padding(
+          child: SingleChildScrollView(
               padding: const EdgeInsets.all(22),
-              child: _state == 'processing'
-                  ? Column(mainAxisSize: MainAxisSize.min, children: [
-                      const CircularProgressIndicator(color: VoltColors.green),
-                      const SizedBox(height: 18),
-                      Text('Payment Processing',
-                          style: Theme.of(context).textTheme.titleLarge),
-                      const SizedBox(height: 8),
-                      Text(_message ?? 'Waiting for confirmation…',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(color: VoltColors.muted)),
-                      if (_booking != null)
-                        TextButton(
-                            onPressed: _checkBackend,
-                            child: const Text('Check status again'))
-                    ])
-                  : _state == 'failed'
+              child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 480),
+                  child: _state == 'processing'
                       ? Column(mainAxisSize: MainAxisSize.min, children: [
-                          const Icon(Icons.error_outline,
-                              color: VoltColors.red, size: 46),
-                          const SizedBox(height: 14),
-                          Text('Payment Failed',
+                          const CircularProgressIndicator(
+                              color: VoltColors.green),
+                          const SizedBox(height: 18),
+                          Text('Payment Processing',
                               style: Theme.of(context).textTheme.titleLarge),
                           const SizedBox(height: 8),
-                          Text(_message ?? 'The payment could not be started.',
-                              textAlign: TextAlign.center),
-                          const SizedBox(height: 16),
-                          FilledButton(
-                              onPressed: () => Navigator.pop(context),
-                              child: const Text('Back to booking'))
-                        ])
-                      : Column(mainAxisSize: MainAxisSize.min, children: [
-                          const Icon(Icons.lock,
-                              color: VoltColors.cyan, size: 46),
-                          const SizedBox(height: 14),
-                          Text('₹${widget.slot['price_inr'] ?? '—'}',
-                              style:
-                                  Theme.of(context).textTheme.headlineMedium),
-                          const SizedBox(height: 8),
-                          const Text(
-                              'Payment status will be confirmed by VoltStop after the gateway webhook is verified.',
+                          Text(_message ?? 'Waiting for confirmation…',
                               textAlign: TextAlign.center,
-                              style: TextStyle(color: VoltColors.muted)),
-                          if (_message != null)
-                            Padding(
-                                padding: const EdgeInsets.only(top: 12),
-                                child: Text(_message!,
-                                    style: const TextStyle(
-                                        color: VoltColors.red))),
-                          const SizedBox(height: 20),
-                          SizedBox(
-                              width: double.infinity,
-                              child: FilledButton(
-                                  onPressed: _creating || _state == 'paying'
-                                      ? null
-                                      : _begin,
-                                  child: _creating
-                                      ? const CircularProgressIndicator()
-                                      : const Text(
-                                          'Pay securely with Razorpay')))
-                        ]))));
+                              style: const TextStyle(color: VoltColors.muted)),
+                          if (_booking != null)
+                            TextButton(
+                                onPressed: _checkBackend,
+                                child: const Text('Check status again'))
+                        ])
+                      : _state == 'failed'
+                          ? Column(mainAxisSize: MainAxisSize.min, children: [
+                              Container(
+                                width: 62,
+                                height: 62,
+                                decoration: BoxDecoration(
+                                  color: VoltColors.red.withValues(alpha: .09),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(Icons.error_outline,
+                                    color: VoltColors.red, size: 34),
+                              ),
+                              const SizedBox(height: 16),
+                              Text('Payment Failed',
+                                  style:
+                                      Theme.of(context).textTheme.titleLarge),
+                              const SizedBox(height: 8),
+                              Text(
+                                  _message ??
+                                      'The payment could not be started.',
+                                  textAlign: TextAlign.center),
+                              const SizedBox(height: 16),
+                              FilledButton(
+                                  onPressed: () => Navigator.pop(context),
+                                  child: const Text('Back to booking'))
+                            ])
+                          : Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                  const Text('Payment summary',
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 17)),
+                                  const SizedBox(height: 11),
+                                  VoltCard(
+                                      child: Column(children: [
+                                    Row(children: [
+                                      const VoltIconBadge(
+                                          icon: Icons.ev_station, size: 40),
+                                      const SizedBox(width: 11),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(widget.vendor.name,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                    fontWeight: FontWeight.w800,
+                                                    fontSize: 14)),
+                                            const SizedBox(height: 3),
+                                            Text(
+                                              widget.slot['slot_start_time'] ==
+                                                      null
+                                                  ? 'Time to be confirmed'
+                                                  : '${_slotDate(widget.slot)} · ${_slotTime(widget.slot)}',
+                                              style: const TextStyle(
+                                                  color: VoltColors.muted,
+                                                  fontSize: 11),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ]),
+                                    const SizedBox(height: 13),
+                                    const Divider(height: 1),
+                                    const SizedBox(height: 13),
+                                    Row(children: [
+                                      const Text('Total payable',
+                                          style: TextStyle(
+                                              color: VoltColors.muted)),
+                                      const Spacer(),
+                                      Text(
+                                          '₹${widget.slot['price_inr'] ?? '—'}',
+                                          style: const TextStyle(
+                                              color: VoltColors.forest,
+                                              fontWeight: FontWeight.w900,
+                                              fontSize: 20)),
+                                    ]),
+                                  ])),
+                                  const SizedBox(height: 15),
+                                  const Row(children: [
+                                    Icon(Icons.verified_user_outlined,
+                                        color: VoltColors.forest, size: 17),
+                                    SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        'Payment status is confirmed by VoltStop only after the gateway webhook is verified.',
+                                        style: TextStyle(
+                                            color: VoltColors.muted,
+                                            fontSize: 11),
+                                      ),
+                                    ),
+                                  ]),
+                                  if (_message != null)
+                                    Padding(
+                                        padding: const EdgeInsets.only(top: 12),
+                                        child: VoltInlineError(
+                                            message: _message!)),
+                                  const SizedBox(height: 20),
+                                  FilledButton(
+                                      onPressed: _creating || _state == 'paying'
+                                          ? null
+                                          : _begin,
+                                      child: _creating
+                                          ? const SizedBox(
+                                              width: 20,
+                                              height: 20,
+                                              child: CircularProgressIndicator(
+                                                  strokeWidth: 2))
+                                          : const Text(
+                                              'Pay securely with Razorpay')),
+                                ])))));
 }
 
 class BookingSuccessScreen extends StatelessWidget {
@@ -3504,33 +3681,132 @@ class BookingSuccessScreen extends StatelessWidget {
   final Booking booking;
   final Pitstop vendor;
   @override
-  Widget build(BuildContext context) => Scaffold(
-      body: SafeArea(
-          child: Center(
-              child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.check_circle,
-                        color: VoltColors.green, size: 76),
-                    const SizedBox(height: 18),
-                    Text('Booking Confirmed',
-                        style: Theme.of(context).textTheme.headlineMedium),
-                    const SizedBox(height: 8),
-                    Text('${vendor.name}\nBooking ${booking.id}',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: VoltColors.muted)),
-                    const SizedBox(height: 22),
-                    SizedBox(
-                        width: double.infinity,
-                        child: FilledButton(
-                            onPressed: () => Navigator.of(context)
-                                .pushAndRemoveUntil(
-                                    MaterialPageRoute(
-                                        builder: (_) => DriverShell(
-                                            app: app, initialIndex: 2)),
-                                    (_) => false),
-                            child: const Text('Go to My Bookings')))
-                  ])))));
+  Widget build(BuildContext context) {
+    final reference = booking.id.length > 8
+        ? booking.id.substring(0, 8).toUpperCase()
+        : booking.id.toUpperCase();
+    return Scaffold(
+        body: SafeArea(
+            child: Center(
+                child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(22),
+                    child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 480),
+                        child:
+                            Column(mainAxisSize: MainAxisSize.min, children: [
+                          TweenAnimationBuilder<double>(
+                            tween: Tween(begin: .6, end: 1),
+                            duration: const Duration(milliseconds: 420),
+                            curve: Curves.easeOutBack,
+                            builder: (context, value, child) =>
+                                Transform.scale(scale: value, child: child),
+                            child: Container(
+                              width: 78,
+                              height: 78,
+                              decoration: BoxDecoration(
+                                color: VoltColors.lime.withValues(alpha: .32),
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                    color: VoltColors.forest
+                                        .withValues(alpha: .22)),
+                              ),
+                              child: const Icon(Icons.check_rounded,
+                                  color: VoltColors.forest, size: 44),
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          Text('Booking Confirmed',
+                              textAlign: TextAlign.center,
+                              style:
+                                  Theme.of(context).textTheme.headlineMedium),
+                          const SizedBox(height: 7),
+                          Text(
+                            'VoltStop verified your payment and reserved your stop.',
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: VoltColors.muted),
+                          ),
+                          const SizedBox(height: 22),
+                          VoltCard(
+                            padding: const EdgeInsets.all(17),
+                            child: Column(children: [
+                              Row(children: [
+                                const VoltIconBadge(
+                                    icon: Icons.ev_station, size: 40),
+                                const SizedBox(width: 11),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(vendor.name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.w800,
+                                              fontSize: 15)),
+                                      const SizedBox(height: 3),
+                                      Text(
+                                        booking.slotStartTime == null
+                                            ? 'Time to be confirmed'
+                                            : '${booking.slotStartTime!.day}/${booking.slotStartTime!.month}/${booking.slotStartTime!.year} · ${_time(booking.slotStartTime)} – ${_time(booking.slotEndTime)}',
+                                        style: const TextStyle(
+                                            color: VoltColors.muted,
+                                            fontSize: 11),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ]),
+                              const SizedBox(height: 13),
+                              const Divider(height: 1),
+                              const SizedBox(height: 13),
+                              _ReviewRow(
+                                  label: 'Booking reference',
+                                  value: '#$reference'),
+                              _ReviewRow(
+                                  label: 'Amount paid',
+                                  value:
+                                      '₹${booking.amountInr.toStringAsFixed(0)}',
+                                  strong: true),
+                            ]),
+                          ),
+                          const SizedBox(height: 15),
+                          const Text(
+                            'Your reservation and QR code are available under Trips. Arrive within your slot window; the pitstop confirms your reference at check-in.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                color: VoltColors.muted, fontSize: 11),
+                          ),
+                          const SizedBox(height: 22),
+                          SizedBox(
+                            width: double.infinity,
+                            child: FilledButton.icon(
+                                onPressed: () => Navigator.of(context)
+                                    .pushAndRemoveUntil(
+                                        MaterialPageRoute(
+                                            builder: (_) => DriverShell(
+                                                app: app, initialIndex: 2)),
+                                        (_) => false),
+                                icon: const Icon(Icons.event_note),
+                                label: const Text('View my trips')),
+                          ),
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton(
+                                onPressed: () => Navigator.of(context)
+                                    .pushAndRemoveUntil(
+                                        MaterialPageRoute(
+                                            builder: (_) =>
+                                                DriverShell(app: app)),
+                                        (_) => false),
+                                child: const Text('Back to home')),
+                          ),
+                        ]))))));
+  }
 }
 
 class _DeparturePicker extends StatelessWidget {
@@ -4097,10 +4373,12 @@ class _BookingsScreenState extends State<BookingsScreen>
                                 b.status == 'pending' ||
                                 b.status == 'confirmed')
                             .toList(),
-                        'No upcoming bookings. Reserve a stop along your route.'),
+                        'No upcoming bookings',
+                        'Reserve a stop along your route and it will appear here.'),
                     _bookingList(
                         bookings.where((b) => b.status == 'completed').toList(),
-                        'Completed trips will appear here.'),
+                        'No completed trips yet',
+                        'Completed trips will appear here after your reservation ends.'),
                     _bookingList(
                         bookings
                             .where((b) =>
@@ -4108,7 +4386,8 @@ class _BookingsScreenState extends State<BookingsScreen>
                                 b.status == 'failed' ||
                                 b.status == 'expired')
                             .toList(),
-                        'No cancelled bookings.'),
+                        'No cancelled bookings',
+                        'Cancelled or expired reservations will appear here.'),
                     _hotelReservationList(),
                   ]);
                 })),
@@ -4130,13 +4409,13 @@ class _BookingsScreenState extends State<BookingsScreen>
         }
         final reservations = snapshot.data ?? const <Map<String, dynamic>>[];
         if (reservations.isEmpty) {
-          return const Center(
-              child: Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Text(
-                      'Hotel reservations will appear here with their verified payment status.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: VoltColors.muted))));
+          return const Padding(
+              padding: EdgeInsets.all(18),
+              child: VoltEmptyState(
+                  icon: Icons.hotel_outlined,
+                  title: 'No hotel stays yet',
+                  description:
+                      'Hotel reservations will appear here with their verified payment status.'));
         }
         return ListView.builder(
             padding: const EdgeInsets.all(16),
@@ -4146,31 +4425,104 @@ class _BookingsScreenState extends State<BookingsScreen>
               final status = '${item['status'] ?? 'unknown'}';
               final canCancel =
                   status == 'payment_pending' || status == 'confirmed';
+              final hasRefund = item['refund_amount_inr'] != null;
               return Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.only(bottom: 11),
                   child: VoltCard(
-                      child: ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: const CircleAvatar(
-                              backgroundColor: VoltColors.elevated,
-                              child:
-                                  Icon(Icons.hotel, color: VoltColors.green)),
-                          title: Text(
-                              '${item['vendor_name'] ?? 'Hotel'} · ${item['room_name'] ?? 'Room'}',
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w800)),
-                          subtitle: Text(
-                              '${_hotelDate(item['check_in'])} ${_hotelTime(item['check_in_time'])} – ${_hotelDate(item['check_out'])} ${_hotelTime(item['check_out_time'])} · ${item['guests']} guests\n₹${item['amount_inr']} · $status · payment ${item['payment_status'] ?? 'pending'}${item['refund_amount_inr'] != null ? '\nRefund ₹${item['refund_amount_inr']} · retained ₹${item['cancellation_fee_inr'] ?? 0}' : ''}',
-                              maxLines: 3),
-                          trailing: canCancel
-                              ? IconButton(
-                                  tooltip: 'Cancel reservation',
-                                  onPressed: () =>
-                                      _cancelHotelReservation(item),
-                                  icon: const Icon(Icons.cancel_outlined,
-                                      color: VoltColors.red))
-                              : const Icon(Icons.chevron_right),
-                          onTap: () => _showHotelReservation(item))));
+                      padding: EdgeInsets.zero,
+                      child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                              borderRadius:
+                                  BorderRadius.circular(VoltRadii.card),
+                              onTap: () => _showHotelReservation(item),
+                              child: Padding(
+                                  padding: const EdgeInsets.all(14),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(children: [
+                                        const VoltIconBadge(
+                                            icon: Icons.hotel_outlined,
+                                            size: 38),
+                                        const SizedBox(width: 11),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                  '${item['vendor_name'] ?? 'Hotel'} · ${item['room_name'] ?? 'Room'}',
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: const TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.w800,
+                                                      fontSize: 14)),
+                                              const SizedBox(height: 3),
+                                              Text(
+                                                '${_hotelDate(item['check_in'])} ${_hotelTime(item['check_in_time'])} – ${_hotelDate(item['check_out'])} ${_hotelTime(item['check_out_time'])} · ${item['guests']} guests',
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                    color: VoltColors.muted,
+                                                    fontSize: 11),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        VoltStatusPill(
+                                            status: status, compact: true),
+                                        if (canCancel) ...[
+                                          const SizedBox(width: 4),
+                                          IconButton(
+                                            tooltip: 'Cancel reservation',
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            onPressed: () =>
+                                                _cancelHotelReservation(item),
+                                            icon: const Icon(
+                                                Icons.cancel_outlined,
+                                                color: VoltColors.red,
+                                                size: 20),
+                                          ),
+                                        ],
+                                      ]),
+                                      const SizedBox(height: 11),
+                                      const Divider(height: 1),
+                                      const SizedBox(height: 9),
+                                      Row(children: [
+                                        const Icon(Icons.currency_rupee,
+                                            size: 14, color: VoltColors.muted),
+                                        const SizedBox(width: 2),
+                                        Text(
+                                          '${item['amount_inr']}',
+                                          style: const TextStyle(
+                                              color: VoltColors.forest,
+                                              fontWeight: FontWeight.w800,
+                                              fontSize: 13),
+                                        ),
+                                        const SizedBox(width: 9),
+                                        Expanded(
+                                          child: Text(
+                                            hasRefund
+                                                ? 'Refund ₹${item['refund_amount_inr']} · retained ₹${item['cancellation_fee_inr'] ?? 0}'
+                                                : 'Payment ${item['payment_status'] ?? 'pending'}',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                                color: VoltColors.muted,
+                                                fontSize: 11),
+                                          ),
+                                        ),
+                                        const Icon(Icons.chevron_right_rounded,
+                                            color: VoltColors.muted, size: 20),
+                                      ]),
+                                    ],
+                                  ))))));
             });
       });
 
@@ -4194,7 +4546,8 @@ class _BookingsScreenState extends State<BookingsScreen>
                   Text('₹${item['amount_inr']} · ${item['status']}'),
                   Text('Payment: ${item['payment_status'] ?? 'pending'}'),
                   if (item['refund_amount_inr'] != null)
-                    Text('Refund ₹${item['refund_amount_inr']} · retained ₹${item['cancellation_fee_inr'] ?? 0}'),
+                    Text(
+                        'Refund ₹${item['refund_amount_inr']} · retained ₹${item['cancellation_fee_inr'] ?? 0}'),
                   if (item['vendor_lat'] is num && item['vendor_lng'] is num)
                     SizedBox(
                         width: double.infinity,
@@ -4207,8 +4560,10 @@ class _BookingsScreenState extends State<BookingsScreen>
                                             .toDouble(),
                                         longitude: (item['vendor_lng'] as num)
                                             .toDouble(),
-                                        title: '${item['vendor_name'] ?? 'Hotel'}',
-                                        address: item['vendor_address']?.toString(),
+                                        title:
+                                            '${item['vendor_name'] ?? 'Hotel'}',
+                                        address:
+                                            item['vendor_address']?.toString(),
                                         serviceType: 'hotel'))),
                             icon: const Icon(Icons.directions),
                             label: const Text('Directions to hotel'))),
@@ -4230,8 +4585,8 @@ class _BookingsScreenState extends State<BookingsScreen>
           .hotelCancellationQuote('${item['id']}');
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Could not check refund estimate: $error')));
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not check refund estimate: $error')));
       }
       return;
     }
@@ -4273,43 +4628,117 @@ class _BookingsScreenState extends State<BookingsScreen>
     }
   }
 
-  Widget _bookingList(List<Booking> bookings, String empty) => bookings.isEmpty
-      ? Center(
-          child: Padding(
-              padding: const EdgeInsets.all(25),
-              child: Text(empty,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: VoltColors.muted))))
-      : ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: bookings.length,
-          itemBuilder: (context, index) {
-            final booking = bookings[index];
-            return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: VoltCard(
-                    child: Material(
-                        color: Colors.transparent,
-                        child: ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: const CircleAvatar(
-                                backgroundColor: VoltColors.elevated,
-                                child: Icon(Icons.ev_station,
-                                    color: VoltColors.green)),
-                            title: Text(booking.vendorName ?? 'Highway pitstop',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w800)),
-                            subtitle: Text(
-                                '${booking.slotStartTime == null ? 'Time to be confirmed' : '${booking.slotStartTime!.day}/${booking.slotStartTime!.month} • ${_time(booking.slotStartTime)} – ${_time(booking.slotEndTime)}'}\n₹${booking.amountInr.toStringAsFixed(0)} • ${booking.status}',
-                                maxLines: 2),
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                    builder: (_) => BookingDetailsScreen(
-                                        app: widget.app,
-                                        booking: booking)))))));
-          });
+  Widget _bookingList(
+          List<Booking> bookings, String title, String description) =>
+      bookings.isEmpty
+          ? Padding(
+              padding: const EdgeInsets.all(18),
+              child: VoltEmptyState(
+                icon: Icons.event_note_outlined,
+                title: title,
+                description: description,
+              ),
+            )
+          : ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: bookings.length,
+              itemBuilder: (context, index) {
+                final booking = bookings[index];
+                final serviceType =
+                    booking.serviceType ?? booking.vendorType ?? '';
+                return Padding(
+                    padding: const EdgeInsets.only(bottom: 11),
+                    child: VoltCard(
+                        padding: EdgeInsets.zero,
+                        child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                                borderRadius:
+                                    BorderRadius.circular(VoltRadii.card),
+                                onTap: () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                        builder: (_) => BookingDetailsScreen(
+                                            app: widget.app,
+                                            booking: booking))),
+                                child: Padding(
+                                    padding: const EdgeInsets.all(14),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Row(children: [
+                                          VoltIconBadge(
+                                              icon: _serviceIcon(serviceType),
+                                              size: 38),
+                                          const SizedBox(width: 11),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                    booking.vendorName ??
+                                                        'Highway pitstop',
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: const TextStyle(
+                                                        fontWeight:
+                                                            FontWeight.w800,
+                                                        fontSize: 14)),
+                                                const SizedBox(height: 3),
+                                                Text(
+                                                  booking.slotStartTime == null
+                                                      ? 'Time to be confirmed'
+                                                      : '${booking.slotStartTime!.day}/${booking.slotStartTime!.month}/${booking.slotStartTime!.year} · ${_time(booking.slotStartTime)} – ${_time(booking.slotEndTime)}',
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: const TextStyle(
+                                                      color: VoltColors.muted,
+                                                      fontSize: 11),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          VoltStatusPill(
+                                              status: booking.status,
+                                              compact: true),
+                                        ]),
+                                        const SizedBox(height: 11),
+                                        const Divider(height: 1),
+                                        const SizedBox(height: 9),
+                                        Row(children: [
+                                          const Icon(Icons.currency_rupee,
+                                              size: 14,
+                                              color: VoltColors.muted),
+                                          const SizedBox(width: 2),
+                                          Text(
+                                            booking.amountInr
+                                                .toStringAsFixed(0),
+                                            style: const TextStyle(
+                                                color: VoltColors.forest,
+                                                fontWeight: FontWeight.w800,
+                                                fontSize: 13),
+                                          ),
+                                          const SizedBox(width: 9),
+                                          Text(
+                                            '${booking.paymentStatus ?? 'payment pending'}',
+                                            style: const TextStyle(
+                                                color: VoltColors.muted,
+                                                fontSize: 11),
+                                          ),
+                                          const Spacer(),
+                                          const Icon(
+                                              Icons.chevron_right_rounded,
+                                              color: VoltColors.muted,
+                                              size: 20),
+                                        ]),
+                                      ],
+                                    ))))));
+              });
 }
 
 class BookingDetailsScreen extends StatefulWidget {
@@ -4372,8 +4801,8 @@ class _BookingDetailsScreenState extends State<BookingDetailsScreen> {
           .bookingCancellationQuote(_booking.id);
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Could not check refund estimate: $error')));
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not check refund estimate: $error')));
       }
       return;
     }
@@ -4421,19 +4850,20 @@ class _BookingDetailsScreenState extends State<BookingDetailsScreen> {
       body: ListView(padding: const EdgeInsets.all(18), children: [
         VoltCard(
             child: Column(children: [
-          Icon(
-              _serviceIcon(_booking.serviceType ?? _booking.vendorType ?? ''),
-              color: VoltColors.green,
-              size: 40),
-          const SizedBox(height: 10),
-          Text(_booking.status.toUpperCase(),
-              style: const TextStyle(
-                  color: VoltColors.green, fontWeight: FontWeight.w900)),
+          VoltIconBadge(
+              icon: _serviceIcon(
+                  _booking.serviceType ?? _booking.vendorType ?? ''),
+              size: 52),
+          const SizedBox(height: 12),
+          VoltStatusPill(status: _booking.status),
           const SizedBox(height: 14),
           _ReviewRow(
               label: 'Booking reference',
-              value: '#${_booking.id.length > 8 ? _booking.id.substring(0, 8).toUpperCase() : _booking.id.toUpperCase()}'),
-          _ReviewRow(label: 'Pitstop', value: _booking.vendorName ?? 'VoltStop partner'),
+              value:
+                  '#${_booking.id.length > 8 ? _booking.id.substring(0, 8).toUpperCase() : _booking.id.toUpperCase()}'),
+          _ReviewRow(
+              label: 'Pitstop',
+              value: _booking.vendorName ?? 'VoltStop partner'),
           if (_booking.vendorAddress != null)
             _ReviewRow(label: 'Address', value: _booking.vendorAddress!),
           if (_booking.serviceType != null)
@@ -4542,8 +4972,7 @@ class _DestinationMapScreenState extends State<DestinationMapScreen> {
   bool _mapReady = false;
   String? _message;
 
-  LatLng get _destination =>
-      LatLng(widget.latitude, widget.longitude);
+  LatLng get _destination => LatLng(widget.latitude, widget.longitude);
 
   @override
   void initState() {
@@ -4578,11 +5007,13 @@ class _DestinationMapScreenState extends State<DestinationMapScreen> {
       final origin = LatLng(position.latitude, position.longitude);
       final url = Uri.parse(
           '${AppConfig.osrmRouterUrl}/${origin.longitude},${origin.latitude};${_destination.longitude},${_destination.latitude}');
-      final response = await Dio().getUri(url.replace(queryParameters: {
-        'overview': 'full',
-        'geometries': 'geojson',
-        'steps': 'false',
-      }), options: Options(receiveTimeout: const Duration(seconds: 15)));
+      final response = await Dio().getUri(
+          url.replace(queryParameters: {
+            'overview': 'full',
+            'geometries': 'geojson',
+            'steps': 'false',
+          }),
+          options: Options(receiveTimeout: const Duration(seconds: 15)));
       final data = response.data;
       final routes = data is Map ? data['routes'] : null;
       final geometry = routes is List && routes.isNotEmpty
@@ -4684,41 +5115,40 @@ class _DestinationMapScreenState extends State<DestinationMapScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(widget.title,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w900, fontSize: 17)),
-                      if (widget.address?.isNotEmpty ?? false)
-                        Padding(
-                            padding: const EdgeInsets.only(top: 4),
-                            child: Text(widget.address!,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    color: VoltColors.muted))),
-                      if (_message != null)
-                        Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Text(_message!,
-                                style: const TextStyle(
-                                    color: VoltColors.muted, fontSize: 12))),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                          width: double.infinity,
-                          child: FilledButton.icon(
-                              onPressed: _loading ? null : _loadRoute,
-                              icon: _loading
-                                  ? const SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 2))
-                                  : const Icon(Icons.route_rounded),
-                              label: Text(_loading
-                                  ? 'Loading route…'
-                                  : _route.isEmpty
-                                      ? 'Try loading route'
-                                      : 'Refresh route')))
-                    ])))
+                  Text(widget.title,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w900, fontSize: 17)),
+                  if (widget.address?.isNotEmpty ?? false)
+                    Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(widget.address!,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: VoltColors.muted))),
+                  if (_message != null)
+                    Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(_message!,
+                            style: const TextStyle(
+                                color: VoltColors.muted, fontSize: 12))),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                          onPressed: _loading ? null : _loadRoute,
+                          icon: _loading
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(Icons.route_rounded),
+                          label: Text(_loading
+                              ? 'Loading route…'
+                              : _route.isEmpty
+                                  ? 'Try loading route'
+                                  : 'Refresh route')))
+                ])))
       ]));
 }
 
@@ -4904,13 +5334,19 @@ class _ProfileActionTile extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 13, vertical: 4),
-        leading: VoltIconBadge(icon: icon, size: 40),
-        title: Text(title, style: Theme.of(context).textTheme.titleSmall),
-        subtitle: Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
-        trailing:
-            const Icon(Icons.chevron_right_rounded, color: VoltColors.muted),
-        onTap: onTap,
+  Widget build(BuildContext context) => Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(VoltRadii.control),
+        child: ListTile(
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 13, vertical: 4),
+          leading: VoltIconBadge(icon: icon, size: 40),
+          title: Text(title, style: Theme.of(context).textTheme.titleSmall),
+          subtitle:
+              Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+          trailing:
+              const Icon(Icons.chevron_right_rounded, color: VoltColors.muted),
+          onTap: onTap,
+        ),
       );
 }

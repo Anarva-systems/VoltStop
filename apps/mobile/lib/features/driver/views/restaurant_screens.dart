@@ -413,8 +413,12 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen> {
             (category) => (category['items'] as List? ?? const []).isNotEmpty);
         if (!hasAvailableItems)
           return const Center(
-              child: Text(
-                  'No menu items are currently available. Please check again later.'));
+              child: VoltEmptyState(
+            icon: Icons.restaurant_menu_outlined,
+            title: 'Menu unavailable',
+            description:
+                'No menu items are currently available. Please check again later.',
+          ));
         return ListView(
             padding: const EdgeInsets.all(16),
             children: categories
@@ -480,27 +484,74 @@ class _RestaurantMenuScreenState extends State<RestaurantMenuScreen> {
         final orders = snapshot.data ?? const [];
         if (orders.isEmpty)
           return const Center(
-              child: Text(
-                  'Your restaurant orders will appear here after checkout.'));
+              child: VoltEmptyState(
+            icon: Icons.receipt_long_outlined,
+            title: 'No orders yet',
+            description:
+                'Your restaurant orders will appear here after checkout.',
+          ));
         return ListView(
             padding: const EdgeInsets.all(16),
             children: orders.map((order) {
               final items = order['items'] as List? ?? const [];
-              return Card(
-                  child: ExpansionTile(
-                      title: Text(
-                          '${order['restaurant_name']} · ₹${order['total_inr']}'),
-                      subtitle: Text(
-                          '${order['status']} · payment ${order['payment_status'] ?? 'pending'}${order['webhook_verified'] == true ? ' (verified)' : ''}'),
-                      children: items
-                          .whereType<Map>()
-                          .map((item) => ListTile(
-                              title:
-                                  Text('${item['name']} × ${item['quantity']}'),
-                              subtitle:
-                                  Text('${item['selected_options'] ?? ''}'),
-                              trailing: Text('₹${item['line_total_inr']}')))
-                          .toList()));
+              return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: VoltCard(
+                      padding: EdgeInsets.zero,
+                      child: ExpansionTile(
+                        shape: const Border(),
+                        collapsedShape: const Border(),
+                        tilePadding: const EdgeInsets.symmetric(horizontal: 14),
+                        childrenPadding:
+                            const EdgeInsets.fromLTRB(14, 0, 14, 12),
+                        leading: const VoltIconBadge(
+                            icon: Icons.restaurant_outlined, size: 38),
+                        title: Row(children: [
+                          Expanded(
+                              child: Text('${order['restaurant_name']}',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w800))),
+                          const SizedBox(width: 8),
+                          VoltStatusPill(
+                              status: '${order['status']}', compact: true),
+                        ]),
+                        subtitle: Padding(
+                            padding: const EdgeInsets.only(top: 3),
+                            child: Text(
+                                '₹${order['total_inr']} · payment ${order['payment_status'] ?? 'pending'}${order['webhook_verified'] == true ? ' · verified' : ''}',
+                                style: const TextStyle(
+                                    color: VoltColors.muted, fontSize: 12))),
+                        children: [
+                          const Divider(height: 1),
+                          ...items.whereType<Map>().map((item) => Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 8),
+                                child: Row(children: [
+                                  Expanded(
+                                      child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                        Text(
+                                            '${item['name']} × ${item['quantity']}',
+                                            style: const TextStyle(
+                                                fontWeight: FontWeight.w700)),
+                                        if ('${item['selected_options'] ?? ''}'
+                                            .isNotEmpty)
+                                          Text('${item['selected_options']}',
+                                              style: const TextStyle(
+                                                  color: VoltColors.muted,
+                                                  fontSize: 12)),
+                                      ])),
+                                  const SizedBox(width: 12),
+                                  Text('₹${item['line_total_inr']}',
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                          color: VoltColors.forest)),
+                                ]),
+                              )),
+                        ],
+                      )));
             }).toList());
       });
 }
