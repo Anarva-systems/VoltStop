@@ -28,5 +28,5 @@ jobs:
         run: npm ci
       - name: Type-check
         run: npm run lint
-      - name: Supabase config tests
-        run: npm run test:supabase-config
+      - name: Portal config and view tests
+        run: npm test
