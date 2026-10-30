@@ -66,6 +66,7 @@ class DriverRepository {
     required double efficiency,
     bool persist = true,
     DateTime? departureAt,
+    String? vehicleId,
   }) async {
     _validateRouteInputs(batteryKwh, stateOfCharge, efficiency);
     return Map<String, dynamic>.from(await _api.post(
@@ -77,6 +78,7 @@ class DriverRepository {
         'current_soc': stateOfCharge,
         'efficiency_km_per_kwh': efficiency,
         'persist': persist,
+        if (vehicleId != null) 'vehicle_id': vehicleId,
         if (departureAt != null)
           'departure_at': departureAt.toUtc().toIso8601String(),
       },
@@ -239,6 +241,7 @@ class DriverRepository {
     required double batteryKwh,
     required double efficiencyKmPerKwh,
     double? currentSoc,
+    double? maxChargingKw,
     List<String> connectorCompatibility = const [],
     bool isDefault = false,
   }) async {
@@ -252,6 +255,7 @@ class DriverRepository {
         'battery_kwh': batteryKwh,
         'efficiency_km_per_kwh': efficiencyKmPerKwh,
         'current_soc': currentSoc,
+        'max_charging_kw': maxChargingKw,
         'connector_compatibility': connectorCompatibility,
         'is_default': isDefault,
       },
@@ -592,6 +596,58 @@ class DriverRepository {
     return controller.stream;
   }
 
+  /// In-app notifications wake the screen through Realtime; the REST list
+  /// endpoint stays the source of truth, so this stream carries no payload.
+  Stream<void> watchNotifications() {
+    final client = _supabase;
+    if (client == null) return const Stream<void>.empty();
+    final userId = _userId;
+    return client
+        .from('notifications')
+        .stream(primaryKey: ['id'])
+        .eq('user_id', userId)
+        .map<void>((_) {});
+  }
+
+  /// Transport for push only. The API stores the device token and drains any
+  /// queued delivery, so this works without a native Firebase SDK in the app:
+  /// a build that has no google-services.json keeps using REST plus Realtime.
+  Future<Map<String, dynamic>> registerPushToken({
+    required String deviceToken,
+    required String platform,
+  }) async {
+    final token = deviceToken.trim();
+    if (token.length < 16 || token.length > 512) {
+      throw ArgumentError(
+        'A push token must be between 16 and 512 characters.',
+      );
+    }
+    if (!const ['android', 'ios', 'web'].contains(platform)) {
+      throw ArgumentError(
+        'Push tokens are registered for android, ios or web.',
+      );
+    }
+    final result = await _api.put(
+      '/notifications/push-token',
+      data: {'token': token, 'platform': platform},
+    );
+    if (result is! Map) {
+      throw const ApiException(
+        'VoltStop returned an unexpected push token response. Retry or contact support.',
+        category: 'response',
+      );
+    }
+    return Map<String, dynamic>.from(result);
+  }
+
+  Future<void> unregisterPushToken({required String deviceToken}) async {
+    final token = deviceToken.trim();
+    if (token.isEmpty) {
+      throw ArgumentError('Provide the push token that should be removed.');
+    }
+    await _api.delete('/notifications/push-token', query: {'token': token});
+  }
+
   Future<Booking> booking(String id) async {
     final rows = await _loadBookings(bookingId: id);
     if (rows.isEmpty) throw StateError('Booking was not found.');
@@ -675,24 +731,70 @@ class DriverRepository {
       );
 }
 
-Map<String, double> estimateRouteEnergy({
+/// Mirrors `app.routes.energy` on the API so a pre-flight local estimate and a
+/// planned route never disagree about what "range" means.
+const double routeEfficiencyDerate = 0.85;
+const double routeSafetyBufferSocPct = 15;
+const double routeChargingWindowHighSocPct = 35;
+const double routeChargingWindowLowSocPct = 20;
+
+Map<String, dynamic> estimateRouteEnergy({
   required int distanceMeters,
   required double batteryKwh,
   required double stateOfCharge,
   required double efficiency,
+  double derate = routeEfficiencyDerate,
+  double safetyBufferSocPct = routeSafetyBufferSocPct,
 }) {
   _validateRouteInputs(batteryKwh, stateOfCharge, efficiency);
-  if (distanceMeters <= 0)
+  if (distanceMeters <= 0) {
     throw ArgumentError.value(distanceMeters, 'distanceMeters');
+  }
+  if (!derate.isFinite || derate <= 0 || derate > 1) {
+    throw ArgumentError.value(derate, 'derate');
+  }
+  if (!safetyBufferSocPct.isFinite ||
+      safetyBufferSocPct < 0 ||
+      safetyBufferSocPct >= routeChargingWindowLowSocPct) {
+    throw ArgumentError.value(safetyBufferSocPct, 'safetyBufferSocPct');
+  }
   final distanceKm = distanceMeters / 1000;
-  final consumption = distanceKm / efficiency;
+  final effectiveEfficiency = efficiency * derate;
+  final consumption = distanceKm / effectiveEfficiency;
   final remainingSoc = stateOfCharge - (consumption / batteryKwh * 100);
+  double rangeAt(double socPct) => _round(
+      _nonNegative(
+          _rangeAtSoc(stateOfCharge, socPct, batteryKwh, effectiveEfficiency)),
+      2);
+  final windowStart = rangeAt(routeChargingWindowHighSocPct);
+  final windowEnd = rangeAt(routeChargingWindowLowSocPct);
   return {
-    'distance_km': double.parse(distanceKm.toStringAsFixed(2)),
-    'estimated_consumption_kwh': double.parse(consumption.toStringAsFixed(2)),
-    'estimated_remaining_soc': double.parse(remainingSoc.toStringAsFixed(2)),
+    'distance_km': _round(distanceKm, 2),
+    'real_world_efficiency_km_per_kwh': _round(effectiveEfficiency, 3),
+    'efficiency_derate': derate,
+    'safety_buffer_soc_pct': safetyBufferSocPct,
+    'estimated_consumption_kwh': _round(consumption, 2),
+    'estimated_remaining_soc': _round(remainingSoc, 2),
+    'usable_range_km': rangeAt(safetyBufferSocPct),
+    'requires_charging_stop': remainingSoc < safetyBufferSocPct,
+    'unreachable_without_charge': remainingSoc <= 0,
+    'optimal_charging_window': {
+      'from_soc_pct': routeChargingWindowHighSocPct,
+      'to_soc_pct': routeChargingWindowLowSocPct,
+      'start_km': windowStart,
+      'end_km': windowEnd,
+    },
   };
 }
+
+double _rangeAtSoc(double currentSoc, double socPct, double batteryKwh,
+        double effectiveEfficiency) =>
+    (currentSoc - socPct) / 100 * batteryKwh * effectiveEfficiency;
+
+double _nonNegative(double value) => value < 0 ? 0.0 : value;
+
+double _round(double value, int decimals) =>
+    double.parse(value.toStringAsFixed(decimals));
 
 void _validateRouteInputs(
   double batteryKwh,

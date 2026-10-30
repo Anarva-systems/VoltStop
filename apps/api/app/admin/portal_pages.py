@@ -166,7 +166,8 @@ async def services(_admin: Annotated[AdminContext, Depends(require_permission("s
     async with database.pool.acquire() as conn:
         rows = await conn.fetch(
             """select s.id,s.vendor_id,v.name as vendor_name,v.type as vendor_type,v.is_active as vendor_active,
-                      v.is_verified,s.service_type,s.display_name,s.description,s.price_inr,s.capacity,s.is_active,s.updated_at
+                      v.is_verified,s.service_type,s.display_name,s.description,s.price_inr,s.capacity,s.is_active,
+                      s.supported_connectors,s.max_power_kw,s.updated_at
                from public.vendor_services s join public.vendors v on v.id=s.vendor_id
                where ($1::text is null or v.type=$1) and ($2::text is null or v.name ilike '%'||$2||'%' or s.display_name ilike '%'||$2||'%')
                order by v.name,s.service_type limit $3 offset $4""", vendor_type, search, limit, offset,
@@ -273,8 +274,41 @@ async def platform_settings(_admin: Annotated[AdminContext, Depends(require_perm
             if commission_settings_configured
             else None
         )
+        payout_ledger_configured = await conn.fetchval(
+            "select to_regclass('public.vendor_payout_transfers') is not null"
+        )
+        payout_destination_configured = await conn.fetchval(
+            """select exists (
+                 select 1 from information_schema.columns
+                 where table_schema = 'public' and table_name = 'vendors'
+                   and column_name = 'razorpay_linked_account_id'
+               )"""
+        )
+        routable_vendor_count = await conn.fetchval(
+            """select count(*) from public.vendors v
+                 join public.vendor_onboarding o on o.vendor_id = v.id
+               where v.payouts_enabled and v.razorpay_linked_account_id is not null
+                 and o.kyc_status = 'verified' and o.status = 'approved'"""
+        ) if payout_ledger_configured and payout_destination_configured else 0
     checkout_credentials_configured = bool(settings.razorpay_key_id and settings.razorpay_key_secret)
     webhook_secret_configured = len(settings.razorpay_webhook_secret) >= 32
+    payout_schema_configured = bool(payout_ledger_configured and payout_destination_configured)
+    if not payout_schema_configured:
+        payout_status, payout_reason = "estimate_only", (
+            "Payout ledger or linked-account column is missing; run the vendor payout migration."
+        )
+    elif not settings.vendor_settlement_enabled:
+        payout_status, payout_reason = "ready_disabled", (
+            "Routing is implemented but VENDOR_SETTLEMENT_ENABLED is off; payments stay with the platform."
+        )
+    elif not (checkout_credentials_configured and webhook_secret_configured):
+        payout_status, payout_reason = "incomplete", (
+            "Routing is enabled but payment credentials or the webhook secret are missing."
+        )
+    else:
+        payout_status, payout_reason = "routing_enabled", (
+            "Captured payments split toward verified vendor accounts and every transfer is ledgered."
+        )
     return success({
         "portal_origin": settings.vendor_portal_origin,
         "database": {"configured": bool(settings.database_url)},
@@ -288,10 +322,13 @@ async def platform_settings(_admin: Annotated[AdminContext, Depends(require_perm
                        "capture_trigger_configured": bool(commission_capture_trigger_configured),
                        "rate_bps": int(commission_rate_bps) if commission_rate_bps is not None else None,
                        "scope": "charging_bookings"},
-        "vendor_settlement": {"provider": None, "configured": False, "ledger_configured": False,
-                              "automatic_transfers_enabled": False,
-                              "status": "estimate_only",
-                              "reason": "Vendor settlement transfers and payout ledger are not implemented or connected."},
+        "vendor_settlement": {"provider": "Razorpay Route" if payout_schema_configured else None,
+                              "configured": payout_schema_configured,
+                              "ledger_configured": bool(payout_ledger_configured),
+                              "automatic_transfers_enabled": bool(settings.vendor_settlement_enabled),
+                              "routable_vendor_count": int(routable_vendor_count or 0),
+                              "status": payout_status,
+                              "reason": payout_reason},
         "geocoding": {"enabled": False, "reason": "No geocoding provider is configured"},
         "redis": {"configured": bool(settings.redis_enabled and settings.redis_url)},
         "editable_platform_config": False,

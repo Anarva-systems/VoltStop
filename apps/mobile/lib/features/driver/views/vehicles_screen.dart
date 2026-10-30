@@ -145,6 +145,11 @@ class _VehiclesScreenState extends State<VehiclesScreen> {
                         _line('Efficiency',
                             '${vehicle.efficiencyKmPerKwh.toStringAsFixed(1)} km/kWh'),
                         _line(
+                            'Max charging',
+                            vehicle.maxChargingKw == null
+                                ? 'Not set'
+                                : '${vehicle.maxChargingKw!.toStringAsFixed(0)} kW'),
+                        _line(
                             'Current charge',
                             vehicle.currentSoc == null
                                 ? 'Not set'
@@ -201,6 +206,7 @@ class _VehicleDialogState extends State<_VehicleDialog> {
   late final TextEditingController _model;
   late final TextEditingController _battery;
   late final TextEditingController _efficiency;
+  late final TextEditingController _maxKw;
   late final TextEditingController _soc;
   String _type = 'car';
   bool _busy = false;
@@ -226,6 +232,8 @@ class _VehicleDialogState extends State<_VehicleDialog> {
         TextEditingController(text: vehicle?.batteryKwh.toString() ?? '');
     _efficiency = TextEditingController(
         text: vehicle?.efficiencyKmPerKwh.toString() ?? '');
+    _maxKw =
+        TextEditingController(text: vehicle?.maxChargingKw?.toString() ?? '');
     _soc = TextEditingController(text: vehicle?.currentSoc?.toString() ?? '');
     _type = vehicle?.vehicleType ?? 'car';
     _connectors.addAll(vehicle?.connectorCompatibility ?? const []);
@@ -237,6 +245,7 @@ class _VehicleDialogState extends State<_VehicleDialog> {
     _model.dispose();
     _battery.dispose();
     _efficiency.dispose();
+    _maxKw.dispose();
     _soc.dispose();
     super.dispose();
   }
@@ -244,6 +253,8 @@ class _VehicleDialogState extends State<_VehicleDialog> {
   Future<void> _save() async {
     final battery = double.tryParse(_battery.text.trim());
     final efficiency = double.tryParse(_efficiency.text.trim());
+    final maxKw =
+        _maxKw.text.trim().isEmpty ? null : double.tryParse(_maxKw.text.trim());
     final charge =
         _soc.text.trim().isEmpty ? null : double.tryParse(_soc.text.trim());
     if (_make.text.trim().isEmpty ||
@@ -254,10 +265,12 @@ class _VehicleDialogState extends State<_VehicleDialog> {
         efficiency == null ||
         efficiency <= 0 ||
         efficiency > 20 ||
+        (_maxKw.text.trim().isNotEmpty &&
+            (maxKw == null || maxKw <= 0 || maxKw > 1000)) ||
         (_soc.text.trim().isNotEmpty &&
             (charge == null || charge < 0 || charge > 100))) {
       setState(() => _error =
-          'Enter make, model, battery up to 500 kWh, efficiency up to 20 km/kWh, and a charge from 0 to 100%.');
+          'Enter make, model, battery up to 500 kWh, efficiency up to 20 km/kWh, charging power up to 1000 kW, and a charge from 0 to 100%.');
       return;
     }
     setState(() {
@@ -273,6 +286,7 @@ class _VehicleDialogState extends State<_VehicleDialog> {
           batteryKwh: battery,
           efficiencyKmPerKwh: efficiency,
           currentSoc: charge,
+          maxChargingKw: maxKw,
           connectorCompatibility: _connectors.toList(),
         );
       } else {
@@ -283,6 +297,7 @@ class _VehicleDialogState extends State<_VehicleDialog> {
           'battery_kwh': battery,
           'efficiency_km_per_kwh': efficiency,
           'current_soc': charge,
+          'max_charging_kw': maxKw,
           'connector_compatibility': _connectors.toList(),
         });
       }
@@ -338,6 +353,12 @@ class _VehicleDialogState extends State<_VehicleDialog> {
                       const TextInputType.numberWithOptions(decimal: true),
                   decoration:
                       const InputDecoration(labelText: 'Efficiency (km/kWh)')),
+              TextField(
+                  controller: _maxKw,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                      labelText: 'Max charging power kW (optional)')),
               TextField(
                   controller: _soc,
                   keyboardType:

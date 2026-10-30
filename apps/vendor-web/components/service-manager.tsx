@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { apiPatch, apiPost } from "@/services/api";
 import { Button, EmptyState, ErrorState, formatMoney, Icon, PageHeader, Panel, SectionHeading, Skeleton, StatePill, toast, useAccessToken, useVendorQuery } from "@/components/portal";
 import type { VendorService } from "@/types/vendor";
@@ -9,6 +9,7 @@ const serviceTypes = [
   ["food", "Food"], ["charging", "AC Slow Charging"], ["sleep_and_charge", "Sleep & Charge"],
   ["room", "Room"], ["parking", "Parking"], ["rest_area", "Rest Area"],
 ];
+const connectorOptions = ["CCS2", "Type 2", "CHAdeMO", "Bharat AC", "Bharat DC", "Tesla"];
 const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 function stringValue(value: unknown) { return typeof value === "string" ? value : ""; }
@@ -20,6 +21,11 @@ export function ServiceManager({ pricingOnly = false }: { pricingOnly?: boolean 
   const [busy, setBusy] = useState("");
   const [formError, setFormError] = useState("");
   const [prices, setPrices] = useState<Record<string, string>>({});
+  const [chargingSpecs, setChargingSpecs] = useState(false);
+
+  useEffect(() => {
+    setChargingSpecs((dialog === "new" ? "charging" : dialog?.service_type) === "charging");
+  }, [dialog]);
 
   async function saveService(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -39,6 +45,13 @@ export function ServiceManager({ pricingOnly = false }: { pricingOnly?: boolean 
       toast("Add both opening and closing times, or leave both blank");
       return;
     }
+    const connectors = form.getAll("supported_connectors").map(String);
+    const rawPower = String(form.get("max_power_kw") ?? "").trim();
+    const power = rawPower ? Number(rawPower) : null;
+    if (power !== null && (!Number.isFinite(power) || power <= 0 || power > 1000)) {
+      toast("Enter a charger power between 0.1 and 1000 kW, or leave it blank");
+      return;
+    }
     const availability: Record<string, unknown> = { ...previousAvailability };
     delete availability.days;
     delete availability.open;
@@ -53,6 +66,8 @@ export function ServiceManager({ pricingOnly = false }: { pricingOnly?: boolean 
       price_inr: Number(form.get("price_inr")),
       capacity: form.get("capacity") ? Number(form.get("capacity")) : null,
       availability,
+      supported_connectors: connectors,
+      max_power_kw: power,
       is_active: form.get("is_active") === "on",
     };
     setBusy(dialog === "new" ? "new" : dialog.id);
@@ -90,23 +105,29 @@ export function ServiceManager({ pricingOnly = false }: { pricingOnly?: boolean 
     <PageHeader eyebrow={pricingOnly ? "SERVICE RATES" : "OFFERINGS"} title={pricingOnly ? "Pricing" : "Services & packages"} description={pricingOnly ? "Set your INR prices. Driver-facing prices update from this service catalogue." : "Manage the services drivers can discover and reserve at your location."} action={!pricingOnly && <Button onClick={() => { setFormError(""); setDialog("new"); }}><Icon name="bolt"/>Add service</Button>}/>
     {services.loading ? <div className="service-grid">{Array.from({ length: 4 }, (_, index) => <Panel key={index} className="panel-pad"><Skeleton rows={4}/></Panel>)}</div> : services.error ? <Panel><ErrorState message={services.error} onRetry={services.reload}/></Panel> : !services.data?.length ? <Panel><EmptyState title="No services set up" description="Add the food, charging and stay options drivers can book at your business." action={<Button onClick={() => setDialog("new")}><Icon name="bolt"/>Add your first service</Button>}/></Panel> : pricingOnly ? <div className="service-grid">{services.data.map((service) => <Panel className="service-card" key={service.id}>
       <div className="service-card-head"><div><h3>{service.display_name || label(service.service_type)}</h3><span className="table-secondary">{label(service.service_type)}</span></div><StatePill value={service.is_active ? "available" : "closed"}/></div>
-      <p>{service.description || "No service description added."}</p>
+      <p>{service.description || "No service description added."}</p><ChargerSpecs service={service}/>
       <form onSubmit={(event) => updatePrice(service, event)} className="form-grid" style={{ gridTemplateColumns: "1fr auto", gap: 8, alignItems: "end" }}><label className="label-control">Price · INR<input className="input-control" type="number" min="0" step="0.01" value={prices[service.id] ?? service.price_inr} onChange={(event) => setPrices((current) => ({ ...current, [service.id]: event.target.value }))}/></label><Button disabled={busy === service.id}>{busy === service.id ? "Saving…" : "Save price"}</Button></form>
       <div className="service-actions"><span className="label-note">{service.capacity ? `Capacity ${service.capacity}` : "Capacity managed by slots"}</span><button className="action-link" onClick={() => setDialog(service)}>Edit service</button></div>
     </Panel>)}</div> : <div className="service-grid">{services.data.map((service) => <Panel className="service-card" key={service.id}>
       <div className="service-card-head"><div><h3>{service.display_name || label(service.service_type)}</h3><span className="table-secondary">{label(service.service_type)}</span></div><span className="metric-icon"><Icon name={service.service_type === "charging" ? "bolt" : "store"}/></span></div>
-      <p>{service.description || "Add a short description to help drivers choose this service."}</p><div className="service-price">{formatMoney(service.price_inr)}<small>per reservation</small></div>
+      <p>{service.description || "Add a short description to help drivers choose this service."}</p><ChargerSpecs service={service}/><div className="service-price">{formatMoney(service.price_inr)}<small>per reservation</small></div>
       <div className="service-actions"><StatePill value={service.is_active ? "available" : "closed"}/><div className="table-actions"><button className="action-link" onClick={() => setDialog(service)}>Edit</button><Button variant="secondary" disabled={busy === service.id} onClick={() => toggle(service)}>{busy === service.id ? "Saving…" : service.is_active ? "Pause" : "Enable"}</Button></div></div>
     </Panel>)}</div>}
     {pricingOnly && <p className="label-note" style={{ marginTop: 17 }}>This service pricing report shows listed prices; commission and settlement estimates use verified payment records.</p>}
     {dialog && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setDialog(null)}><div className="modal-card"><div className="modal-head"><div><h2>{dialog === "new" ? "Add a service" : "Edit service"}</h2><p>Choose what drivers can find and reserve at your business.</p></div><button className="close-button" onClick={() => setDialog(null)}><Icon name="close"/></button></div>
-      <form onChange={() => setFormError("")} onSubmit={saveService}>{formError && <p className="form-error" role="alert">{formError}</p>}<div className="form-grid">
+      <form key={dialog === "new" ? "new" : dialog.id} onChange={() => setFormError("")} onSubmit={saveService}>{formError && <p className="form-error" role="alert">{formError}</p>}<div className="form-grid">
         <label className="label-control form-span-2">Service name<input required name="display_name" className="input-control" placeholder="e.g. AC charging, breakfast, standard room" defaultValue={dialog === "new" ? "" : dialog.display_name ?? ""}/></label>
-        <label className="label-control">Service type<select name="service_type" className="select-control" defaultValue={dialog === "new" ? "charging" : dialog.service_type}>{serviceTypes.map(([value,name]) => <option value={value} key={value}>{name}</option>)}</select></label>
+        <label className="label-control">Service type<select name="service_type" className="select-control" defaultValue={dialog === "new" ? "charging" : dialog.service_type} onChange={(event) => setChargingSpecs(event.target.value === "charging")}>{serviceTypes.map(([value,name]) => <option value={value} key={value}>{name}</option>)}</select></label>
         <label className="label-control">Price per booking · INR<input required min="0" step="0.01" name="price_inr" type="number" className="input-control" placeholder="0.00" defaultValue={dialog === "new" ? "" : dialog.price_inr}/></label>
         <label className="label-control">Capacity per time slot<input min="1" name="capacity" type="number" className="input-control" placeholder="Leave blank to manage in Availability" defaultValue={dialog === "new" ? "" : dialog.capacity ?? ""}/></label>
         <label className="checkbox-line" style={{ alignSelf: "end", minHeight: 41 }}><input name="is_active" type="checkbox" defaultChecked={dialog === "new" ? true : dialog.is_active}/>Available to drivers</label>
         <label className="label-control form-span-2">Description<textarea name="description" className="textarea-control" placeholder="What is included in this service?" defaultValue={dialog === "new" ? "" : dialog.description ?? ""}/></label>
+        {chargingSpecs && <fieldset className="service-hours form-span-2"><legend>Charger specs <span className="label-note">Optional · drivers only see an estimated charge time when you publish these</span></legend>
+          <span className="label-note">Connector types fitted</span>
+          <div className="service-days">{connectorOptions.map((connector) => <label className="service-day" key={connector}><input name="supported_connectors" type="checkbox" value={connector} defaultChecked={dialog !== "new" && Array.isArray(dialog.supported_connectors) && dialog.supported_connectors.includes(connector)}/>{connector}</label>)}</div>
+          <label className="label-control">Max power per unit · kW<input min="0.1" step="0.1" name="max_power_kw" type="number" className="input-control" placeholder="e.g. 60" defaultValue={dialog === "new" ? "" : dialog.max_power_kw ?? ""}/></label>
+          <span className="label-note">Drivers whose vehicle uses none of these connectors will not see this station on their route.</span>
+        </fieldset>}
         <fieldset className="service-hours form-span-2"><legend>Opening hours <span className="label-note">Optional · leave blank if this service has no fixed hours</span></legend>
           <span className="label-note">Days available</span>
           <div className="service-days">{weekdays.map((day) => <label className="service-day" key={day}><input name="availability_days" type="checkbox" value={day} defaultChecked={dialog !== "new" && Array.isArray(dialog.availability?.days) && dialog.availability.days.includes(day)}/>{day}</label>)}</div>
@@ -118,3 +139,15 @@ export function ServiceManager({ pricingOnly = false }: { pricingOnly?: boolean 
 }
 
 function label(value: string) { return serviceTypes.find(([key]) => key === value)?.[1] ?? value.replaceAll("_", " "); }
+
+function ChargerSpecs({ service }: { service: VendorService }) {
+  if (service.service_type !== "charging") return null;
+  const connectors = Array.isArray(service.supported_connectors) ? service.supported_connectors : [];
+  const power = service.max_power_kw === null || service.max_power_kw === undefined ? null : Number(service.max_power_kw);
+  if (!connectors.length && power === null) return null;
+  return <div className="service-specs">
+    {power !== null && Number.isFinite(power) && <span className="spec-tag">{`${power} kW max`}</span>}
+    {connectors.map((connector) => <span className="spec-tag" key={connector}>{connector}</span>)}
+    {!connectors.length && <span className="spec-tag spec-tag-plain">Connectors not set · route search skips you</span>}
+  </div>;
+}

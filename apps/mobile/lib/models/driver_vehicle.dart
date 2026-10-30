@@ -7,6 +7,7 @@ class DriverVehicle {
     required this.batteryKwh,
     required this.efficiencyKmPerKwh,
     this.currentSoc,
+    this.maxChargingKw,
     this.connectorCompatibility = const [],
     this.isDefault = false,
   });
@@ -18,6 +19,7 @@ class DriverVehicle {
   final double batteryKwh;
   final double efficiencyKmPerKwh;
   final double? currentSoc;
+  final double? maxChargingKw;
   final List<String> connectorCompatibility;
   final bool isDefault;
 
@@ -35,6 +37,9 @@ class DriverVehicle {
         currentSoc: json['current_soc'] == null
             ? null
             : double.tryParse('${json['current_soc']}'),
+        maxChargingKw: json['max_charging_kw'] == null
+            ? null
+            : double.tryParse('${json['max_charging_kw']}'),
         connectorCompatibility:
             (json['connector_compatibility'] as List? ?? const [])
                 .map((value) => '$value')

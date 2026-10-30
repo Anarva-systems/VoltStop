@@ -1,8 +1,9 @@
 from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
+from app.core.connectors import normalize_connectors
+
 VehicleText = Annotated[str, StringConstraints(min_length=1, max_length=120, strip_whitespace=True)]
-_ALLOWED_CONNECTORS = {"CCS2", "Type 2", "CHAdeMO", "Bharat AC", "Bharat DC", "Tesla"}
 
 
 class VehicleCreate(BaseModel):
@@ -14,6 +15,7 @@ class VehicleCreate(BaseModel):
     efficiency_km_per_kwh: float = Field(gt=0, le=20)
     current_soc: float | None = Field(default=None, ge=0, le=100)
     connector_compatibility: list[str] = Field(default_factory=list, max_length=8)
+    max_charging_kw: float | None = Field(default=None, gt=0, le=1000)
     is_default: bool = False
 
     @field_validator("vehicle_type")
@@ -27,10 +29,7 @@ class VehicleCreate(BaseModel):
     @field_validator("connector_compatibility")
     @classmethod
     def valid_connectors(cls, values: list[str]) -> list[str]:
-        normalized = list(dict.fromkeys(value.strip() for value in values))
-        if any(value not in _ALLOWED_CONNECTORS for value in normalized):
-            raise ValueError("A connector type is not supported")
-        return normalized
+        return normalize_connectors(values)
 
 
 class VehiclePatch(BaseModel):
@@ -42,6 +41,7 @@ class VehiclePatch(BaseModel):
     efficiency_km_per_kwh: float | None = Field(default=None, gt=0, le=20)
     current_soc: float | None = Field(default=None, ge=0, le=100)
     connector_compatibility: list[str] | None = Field(default=None, max_length=8)
+    max_charging_kw: float | None = Field(default=None, gt=0, le=1000)
     is_default: bool | None = None
 
     @field_validator("vehicle_type")
@@ -59,10 +59,7 @@ class VehiclePatch(BaseModel):
     def valid_connectors(cls, values: list[str] | None) -> list[str] | None:
         if values is None:
             return values
-        normalized = list(dict.fromkeys(value.strip() for value in values))
-        if any(value not in _ALLOWED_CONNECTORS for value in normalized):
-            raise ValueError("A connector type is not supported")
-        return normalized
+        return normalize_connectors(values)
 
     def changes(self) -> dict:
         changes = self.model_dump(exclude_unset=True)

@@ -23,7 +23,18 @@ def route_service(
     client: httpx.AsyncClient = Depends(get_http_client),
     settings: Settings = Depends(get_settings),
 ) -> PilotRouteService:
-    return PilotRouteService(OpenStreetMapRouteProvider(client, settings))
+    return PilotRouteService(OpenStreetMapRouteProvider(client, settings), settings)
+
+
+def _vehicle_charge_capability(vehicle: dict[str, Any] | None) -> tuple[list[str] | None, float | None]:
+    if vehicle is None:
+        return None, None
+    connectors = list(vehicle.get("connector_compatibility") or [])
+    max_charging_kw = vehicle.get("max_charging_kw")
+    return (
+        connectors or None,
+        float(max_charging_kw) if max_charging_kw is not None else None,
+    )
 
 
 @router.post("/plan")
@@ -33,6 +44,15 @@ async def plan_route(
     database: DatabaseDependency,
     service: PilotRouteService = Depends(route_service),
 ) -> dict[str, Any]:
+    # Connectors come from the driver's own saved vehicle, never from the request body.
+    connectors = None
+    vehicle_max_charging_kw = None
+    if payload.vehicle_id is not None:
+        vehicle = await database.driver_vehicle(user.id, payload.vehicle_id)
+        if vehicle is None:
+            raise ApiError(404, "VEHICLE_NOT_FOUND", "Choose one of your saved vehicles")
+        connectors, vehicle_max_charging_kw = _vehicle_charge_capability(vehicle)
+
     result = await service.plan(
         payload.origin,
         payload.destination,
@@ -40,6 +60,8 @@ async def plan_route(
         payload.current_soc,
         payload.efficiency_km_per_kwh,
         database,
+        connectors=connectors,
+        vehicle_max_charging_kw=vehicle_max_charging_kw,
     )
     result["departure_at"] = payload.departure_at.isoformat() if payload.departure_at else None
     if payload.persist:
@@ -75,6 +97,7 @@ async def _plan_trip_if_possible(
 ) -> tuple[dict[str, Any] | None, str]:
     if payload.current_soc is None:
         return None, "not_requested"
+    connectors, vehicle_max_charging_kw = _vehicle_charge_capability(vehicle)
     try:
         planned = await service.plan(
             payload.origin,
@@ -83,6 +106,8 @@ async def _plan_trip_if_possible(
             payload.current_soc,
             float(vehicle["efficiency_km_per_kwh"]),
             database,
+            connectors=connectors,
+            vehicle_max_charging_kw=vehicle_max_charging_kw,
         )
         planned["departure_at"] = payload.departure_at.isoformat()
         return planned, "available"
@@ -169,6 +194,7 @@ async def get_driver_trip(
     trip_id: UUID,
     user: CurrentUser,
     database: DatabaseDependency,
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     trip = await database.driver_trip(user.id, trip_id)
     if trip is None:
@@ -177,7 +203,15 @@ async def get_driver_trip(
         geojson = trip["route_plan"]["route_geojson"]
         if isinstance(geojson, str):
             geojson = json.loads(geojson)
-        trip["recommended_pitstops"] = await database.recommended_route_vendors(json.dumps(geojson))
+        connectors = None
+        if trip.get("vehicle_id"):
+            vehicle = await database.driver_vehicle(user.id, UUID(str(trip["vehicle_id"])))
+            connectors, _ = _vehicle_charge_capability(vehicle)
+        trip["recommended_pitstops"] = await database.recommended_route_vendors(
+            json.dumps(geojson),
+            radius_km=settings.route_corridor_radius_km,
+            connectors=connectors,
+        )
         trip["route_plan_status"] = "available"
     else:
         trip["recommended_pitstops"] = []

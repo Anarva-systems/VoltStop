@@ -607,6 +607,7 @@ class _HomeScreenState extends State<HomeScreen> {
       stateOfCharge: stateOfCharge,
       efficiency: efficiency,
       persist: false,
+      vehicleId: widget.app.activeVehicle?.id,
       departureAt: _departureAt,
     );
   }
@@ -1485,6 +1486,29 @@ IconData _pitstopIcon(Pitstop vendor) {
   if (vendor.matchesDiscoveryCategory('Hotels')) return Icons.hotel_rounded;
   if (vendor.matchesDiscoveryCategory('Food')) return Icons.restaurant_rounded;
   return Icons.ev_station_rounded;
+}
+
+/// Adds the plan's charging verdict to a corridor stop row. The API omits the
+/// estimate whenever either the vehicle or the station power is unknown, so a
+/// missing value has to render as nothing rather than as a guessed number.
+String _routeStopSubtitle(Pitstop vendor, Map<String, dynamic>? details) {
+  final parts = <String>[
+    '${_serviceName(vendor.type)} · ${vendor.distanceKm.toStringAsFixed(1)} km from route',
+  ];
+  if (details == null) return parts.join(' · ');
+  final arrival = double.tryParse('${details['estimated_arrival_soc']}');
+  final minutes = int.tryParse('${details['estimated_charge_minutes']}');
+  final power = double.tryParse('${details['charge_power_kw']}');
+  final companions = details['hospitality_companions'];
+  if (arrival != null) parts.add('arrive at ${arrival.round()}%');
+  if (minutes != null) {
+    final rate = power == null ? '' : ' at ${power.toStringAsFixed(0)} kW';
+    parts.add('~$minutes min to 80%$rate');
+  }
+  if (companions is List && companions.isNotEmpty) {
+    parts.add('food & stay nearby');
+  }
+  return parts.join(' · ');
 }
 
 Color _pitstopColor(Pitstop vendor) {
@@ -3996,6 +4020,7 @@ class _RoutePlannerScreenState extends State<RoutePlannerScreen> {
       stateOfCharge: stateOfCharge,
       efficiency: efficiency,
       persist: persist,
+      vehicleId: widget.app.activeVehicle?.id,
       departureAt: _departureAt,
     );
   }
@@ -4163,6 +4188,10 @@ class _RoutePlannerScreenState extends State<RoutePlannerScreen> {
                 widget.app.profile?.carModel ??
                 'EV profile';
             final routeStops = _routePitstops(data);
+            final usableRangeKm =
+                double.tryParse('${data['usable_range_km']}');
+            final corridorRadiusKm =
+                double.tryParse('${data['corridor_radius_km']}');
             return ListView(padding: const EdgeInsets.all(18), children: [
               _DeparturePicker(
                 value: _departureAt,
@@ -4224,7 +4253,11 @@ class _RoutePlannerScreenState extends State<RoutePlannerScreen> {
                     value: '${consumption.toStringAsFixed(1)} kWh'),
                 _ReviewRow(
                     label: 'Estimated arrival battery',
-                    value: '${remaining.clamp(0, 100).toStringAsFixed(0)}%')
+                    value: '${remaining.clamp(0, 100).toStringAsFixed(0)}%'),
+                if (usableRangeKm != null)
+                  _ReviewRow(
+                      label: 'Usable range at this charge',
+                      value: '${usableRangeKm.toStringAsFixed(0)} km')
               ])),
               const SizedBox(height: 10),
               const Text(
@@ -4239,12 +4272,14 @@ class _RoutePlannerScreenState extends State<RoutePlannerScreen> {
                 style: TextStyle(color: VoltColors.muted, fontSize: 12),
               ),
               if (routeStops.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.only(top: 10),
+                Padding(
+                  padding: const EdgeInsets.only(top: 10),
                   child: VoltCard(
                     child: Text(
-                      'No partner stops are listed within 15 km of this route yet. Search nearby towns in Explore.',
-                      style: TextStyle(color: VoltColors.muted),
+                      corridorRadiusKm == null
+                          ? 'No partner stops are listed along this route yet. Search nearby towns in Explore.'
+                          : 'No partner stops are listed within ${corridorRadiusKm.toStringAsFixed(0)} km of this route yet. Search nearby towns in Explore.',
+                      style: const TextStyle(color: VoltColors.muted),
                     ),
                   ),
                 )
@@ -4259,8 +4294,8 @@ class _RoutePlannerScreenState extends State<RoutePlannerScreen> {
                       leading: Icon(_pitstopIcon(vendor),
                           color: _pitstopColor(vendor)),
                       title: Text(vendor.name),
-                      subtitle: Text(
-                          '${_serviceName(vendor.type)} · ${vendor.distanceKm.toStringAsFixed(1)} km from route'),
+                      subtitle: Text(_routeStopSubtitle(
+                          vendor, stopDetails['${vendor.id}'])),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () => Navigator.push(
                         context,

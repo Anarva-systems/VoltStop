@@ -110,7 +110,7 @@ class Database:
         async with self.pool.acquire() as connection:
             rows = await connection.fetch(
                 """select id,user_id,make,model,vehicle_type,battery_kwh,efficiency_km_per_kwh,
-                          current_soc,connector_compatibility,is_default,created_at,updated_at
+                          current_soc,connector_compatibility,max_charging_kw,is_default,created_at,updated_at
                    from public.driver_vehicles where user_id=$1
                    order by is_default desc,created_at,id""", user_id,
             )
@@ -120,7 +120,7 @@ class Database:
         async with self.pool.acquire() as connection:
             row = await connection.fetchrow(
                 """select id,user_id,make,model,vehicle_type,battery_kwh,efficiency_km_per_kwh,
-                          current_soc,connector_compatibility,is_default,created_at,updated_at
+                          current_soc,connector_compatibility,max_charging_kw,is_default,created_at,updated_at
                    from public.driver_vehicles where user_id=$1 and id=$2""", user_id, vehicle_id,
             )
         return _record_value(row)
@@ -137,10 +137,12 @@ class Database:
                     comparable = (replay["make"], replay["model"], replay["vehicle_type"],
                                   float(replay["battery_kwh"]), float(replay["efficiency_km_per_kwh"]),
                                   float(replay["current_soc"]) if replay["current_soc"] is not None else None,
-                                  list(replay["connector_compatibility"] or []))
+                                  list(replay["connector_compatibility"] or []),
+                                  float(replay["max_charging_kw"]) if replay["max_charging_kw"] is not None else None)
                     requested = (values["make"], values["model"], values["vehicle_type"],
                                  float(values["battery_kwh"]), float(values["efficiency_km_per_kwh"]),
-                                 values.get("current_soc"), values.get("connector_compatibility", []))
+                                 values.get("current_soc"), values.get("connector_compatibility", []),
+                                 values.get("max_charging_kw"))
                     if comparable != requested:
                         raise ApiError(409, "IDEMPOTENCY_KEY_REUSED", "This key was used for a different vehicle")
                     row = replay
@@ -154,13 +156,15 @@ class Database:
                     row = await connection.fetchrow(
                         """insert into public.driver_vehicles
                              (user_id,make,model,vehicle_type,battery_kwh,efficiency_km_per_kwh,current_soc,
-                              connector_compatibility,is_default,idempotency_key)
-                           values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                              connector_compatibility,max_charging_kw,is_default,idempotency_key)
+                           values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
                            returning id,user_id,make,model,vehicle_type,battery_kwh,efficiency_km_per_kwh,
-                                     current_soc,connector_compatibility,is_default,created_at,updated_at""",
+                                     current_soc,connector_compatibility,max_charging_kw,is_default,created_at,updated_at""",
                         user_id, values["make"], values["model"], values["vehicle_type"], Decimal(str(values["battery_kwh"])),
                         Decimal(str(values["efficiency_km_per_kwh"])), Decimal(str(values["current_soc"])) if values.get("current_soc") is not None else None,
-                        values.get("connector_compatibility", []), make_default, idempotency_key,
+                        values.get("connector_compatibility", []),
+                        Decimal(str(values["max_charging_kw"])) if values.get("max_charging_kw") is not None else None,
+                        make_default, idempotency_key,
                     )
                     if make_default:
                         await connection.execute(
@@ -172,9 +176,9 @@ class Database:
         return _record_value(row) or {}
 
     async def patch_driver_vehicle(self, user_id: UUID, vehicle_id: UUID, changes: dict[str, Any]) -> dict[str, Any] | None:
-        allowed = {"make", "model", "vehicle_type", "battery_kwh", "efficiency_km_per_kwh", "current_soc", "connector_compatibility"}
+        allowed = {"make", "model", "vehicle_type", "battery_kwh", "efficiency_km_per_kwh", "current_soc", "connector_compatibility", "max_charging_kw"}
         updates = {key: value for key, value in changes.items() if key in allowed}
-        for key in ("battery_kwh", "efficiency_km_per_kwh", "current_soc"):
+        for key in ("battery_kwh", "efficiency_km_per_kwh", "current_soc", "max_charging_kw"):
             if key in updates and updates[key] is not None:
                 updates[key] = Decimal(str(updates[key]))
         async with self.pool.acquire() as connection:
@@ -208,12 +212,12 @@ class Database:
                         f"""update public.driver_vehicles set {assignments},updated_at=now()
                             where id=${len(values)-1} and user_id=${len(values)}
                             returning id,user_id,make,model,vehicle_type,battery_kwh,efficiency_km_per_kwh,
-                                      current_soc,connector_compatibility,is_default,created_at,updated_at""", *values,
+                                      current_soc,connector_compatibility,max_charging_kw,is_default,created_at,updated_at""", *values,
                     )
                 else:
                     row = await connection.fetchrow(
                         """select id,user_id,make,model,vehicle_type,battery_kwh,efficiency_km_per_kwh,
-                                  current_soc,connector_compatibility,is_default,created_at,updated_at
+                                  current_soc,connector_compatibility,max_charging_kw,is_default,created_at,updated_at
                            from public.driver_vehicles where id=$1 and user_id=$2""", vehicle_id, user_id,
                     )
                 if row and row["is_default"]:
@@ -243,7 +247,7 @@ class Database:
                 await connection.fetchrow("select id from public.profiles where id=$1 for update", user_id)
                 selected = await connection.fetchrow(
                     """select id,user_id,make,model,vehicle_type,battery_kwh,efficiency_km_per_kwh,
-                              current_soc,connector_compatibility,is_default,created_at,updated_at
+                              current_soc,connector_compatibility,max_charging_kw,is_default,created_at,updated_at
                        from public.driver_vehicles where user_id=$1 and id=$2 for update""", user_id, vehicle_id,
                 )
                 if selected is None:
@@ -253,7 +257,7 @@ class Database:
                     """update public.driver_vehicles set is_default=true,updated_at=now()
                        where id=$1 and user_id=$2
                        returning id,user_id,make,model,vehicle_type,battery_kwh,efficiency_km_per_kwh,
-                                 current_soc,connector_compatibility,is_default,created_at,updated_at""",
+                                 current_soc,connector_compatibility,max_charging_kw,is_default,created_at,updated_at""",
                     vehicle_id, user_id,
                 )
                 await connection.execute(
@@ -986,15 +990,23 @@ class Database:
             )
             if not service_exists:
                 raise ApiError(422, "SERVICE_REQUIRED", "Enable this service before adding an availability slot")
-            row = await connection.fetchrow(
-                """insert into public.charging_slots
-                     (vendor_id, slot_start_time, slot_end_time, capacity, price_inr, service_type)
-                   select $1,$2,$3,$4,$5,$6 where exists(
-                     select 1 from public.vendors where id=$1 and owner_id=$7)
-                   returning id, vendor_id, slot_start_time, slot_end_time, capacity, price_inr, status, service_type""",
-                vendor_id, values["slot_start_time"], values["slot_end_time"],
-                values["capacity"], values["price_inr"], values["service_type"], owner_id,
-            )
+            try:
+                row = await connection.fetchrow(
+                    """insert into public.charging_slots
+                       (vendor_id, slot_start_time, slot_end_time, capacity, price_inr, service_type)
+                     select $1,$2,$3,$4,$5,$6 where exists(
+                       select 1 from public.vendors where id=$1 and owner_id=$7)
+                     returning id, vendor_id, slot_start_time, slot_end_time, capacity, price_inr, status, service_type""",
+                    vendor_id, values["slot_start_time"], values["slot_end_time"],
+                    values["capacity"], values["price_inr"], values["service_type"], owner_id,
+                )
+            except asyncpg.ExclusionViolationError as exc:
+                raise ApiError(
+                    409,
+                    "SLOT_WINDOW_OVERLAPS",
+                    "Another open slot for this service already covers part of that window. "
+                    "Widen the existing slot or raise its capacity instead.",
+                ) from exc
         if row is None:
             raise ApiError(404, "VENDOR_NOT_FOUND", "Vendor profile was not found")
         return _record_value(row) or {}
@@ -1039,15 +1051,23 @@ class Database:
                 assignments = ", ".join(f"{key}=${index}" for index, (key, _) in enumerate(selected, start=1))
                 values = [value for _, value in selected]
                 values.extend([slot_id, vendor_id, owner_id])
-                row = await connection.fetchrow(
-                    f"""update public.charging_slots cs set {assignments}, updated_at=now()
-                        from public.vendors v
-                        where cs.id=${len(values)-2} and cs.vendor_id=${len(values)-1}
-                          and v.id=cs.vendor_id and v.owner_id=${len(values)}
-                        returning cs.id, cs.vendor_id, cs.slot_start_time, cs.slot_end_time,
-                                  cs.capacity, cs.price_inr, cs.status, cs.service_type""",
-                    *values,
-                )
+                try:
+                    row = await connection.fetchrow(
+                        f"""update public.charging_slots cs set {assignments}, updated_at=now()
+                            from public.vendors v
+                            where cs.id=${len(values)-2} and cs.vendor_id=${len(values)-1}
+                              and v.id=cs.vendor_id and v.owner_id=${len(values)}
+                            returning cs.id, cs.vendor_id, cs.slot_start_time, cs.slot_end_time,
+                                      cs.capacity, cs.price_inr, cs.status, cs.service_type""",
+                        *values,
+                    )
+                except asyncpg.ExclusionViolationError as exc:
+                    raise ApiError(
+                        409,
+                        "SLOT_WINDOW_OVERLAPS",
+                        "Another open slot for this service already covers part of that window. "
+                        "Widen the existing slot or raise its capacity instead.",
+                    ) from exc
         return _record_value(row) or {}
 
     async def delete_vendor_slot(self, owner_id: UUID, vendor_id: UUID, slot_id: UUID) -> None:
@@ -1078,7 +1098,8 @@ class Database:
         async with self.pool.acquire() as connection:
             rows = await connection.fetch(
                 """select s.id, s.vendor_id, s.service_type, s.display_name, s.description,
-                          s.price_inr, s.capacity, s.availability, s.is_active
+                          s.price_inr, s.capacity, s.availability, s.supported_connectors,
+                          s.max_power_kw, s.is_active
                    from public.vendor_services s join public.vendors v on v.id=s.vendor_id
                    where s.vendor_id=$1 and v.owner_id=$2 order by s.service_type""",
                 vendor_id, owner_id,
@@ -1090,13 +1111,16 @@ class Database:
             async with self.pool.acquire() as connection:
                 row = await connection.fetchrow(
                     """insert into public.vendor_services
-                         (vendor_id, service_type, display_name, description, price_inr, capacity, availability, is_active)
-                       select $1,$2,$3,$4,$5,$6,$7,$8 where exists(
-                         select 1 from public.vendors where id=$1 and owner_id=$9)
+                         (vendor_id, service_type, display_name, description, price_inr, capacity, availability,
+                          supported_connectors, max_power_kw, is_active)
+                       select $1,$2,$3,$4,$5,$6,$7,$8,$9,$10 where exists(
+                         select 1 from public.vendors where id=$1 and owner_id=$11)
                        returning id, vendor_id, service_type, display_name, description,
-                                 price_inr, capacity, availability, is_active""",
+                                 price_inr, capacity, availability, supported_connectors,
+                                 max_power_kw, is_active""",
                     vendor_id, values["service_type"], values["display_name"], values.get("description"),
                     values["price_inr"], values.get("capacity"), json.dumps(values["availability"]),
+                    values.get("supported_connectors", []), values.get("max_power_kw"),
                     values["is_active"], owner_id,
                 )
         except asyncpg.UniqueViolationError as exc:
@@ -1116,7 +1140,7 @@ class Database:
         return _record_value(row) or {}
 
     async def update_vendor_service(self, owner_id: UUID, vendor_id: UUID, service_id: UUID, updates: dict[str, Any]) -> dict[str, Any] | None:
-        allowed = {"service_type", "display_name", "description", "price_inr", "capacity", "availability", "is_active"}
+        allowed = {"service_type", "display_name", "description", "price_inr", "capacity", "availability", "supported_connectors", "max_power_kw", "is_active"}
         selected = [(key, value) for key, value in updates.items() if key in allowed]
         if not selected:
             raise ApiError(422, "EMPTY_PATCH", "Provide at least one service field to update")
@@ -1141,7 +1165,8 @@ class Database:
                     from public.vendors v where s.id=${len(values)-2} and s.vendor_id=${len(values)-1}
                     and v.id=s.vendor_id and v.owner_id=${len(values)}
                     returning s.id, s.vendor_id, s.service_type, s.display_name, s.description,
-                              s.price_inr, s.capacity, s.availability, s.is_active""",
+                              s.price_inr, s.capacity, s.availability, s.supported_connectors,
+                              s.max_power_kw, s.is_active""",
                 *values,
             )
         return _record_value(row)
@@ -1179,32 +1204,110 @@ class Database:
             raise ApiError(404, "VENDOR_NOT_FOUND", "Vendor profile was not found")
         return _record_value(row) or {}
 
-    async def recommended_pitstops(self, route_geojson: str) -> list[dict[str, Any]]:
+    async def vendor_payout_profile(self, owner_id: UUID, vendor_id: UUID) -> dict[str, Any] | None:
+        async with self.pool.acquire() as connection:
+            row = await connection.fetchrow(
+                """select v.id as vendor_id, v.payouts_enabled, v.razorpay_linked_account_id,
+                          v.commission_rate_bps_override,
+                          coalesce(o.kyc_status, 'not_started') as kyc_status,
+                          coalesce(o.status, case when v.is_verified then 'approved' else 'pending') as onboarding_status,
+                          o.kyc_reference, o.kyc_gstin, o.kyc_pan_masked, o.bank_account_masked, o.kyc_verified_at,
+                          (select rate_bps from public.platform_commission_settings where id = 1) as platform_rate_bps,
+                          coalesce((select sum(t.vendor_amount_inr) filter (where t.status in ('processed','settled'))
+                                    from public.vendor_payout_transfers t where t.vendor_id = v.id), 0) as routed_inr,
+                          coalesce((select sum(t.vendor_amount_inr) filter (where t.status = 'planned')
+                                    from public.vendor_payout_transfers t where t.vendor_id = v.id), 0) as planned_inr,
+                          coalesce((select count(*) filter (where t.status = 'failed')
+                                    from public.vendor_payout_transfers t where t.vendor_id = v.id), 0) as failed_transfers,
+                          (select max(t.updated_at) from public.vendor_payout_transfers t where t.vendor_id = v.id) as last_transfer_at
+                   from public.vendors v
+                   left join public.vendor_onboarding o on o.vendor_id = v.id
+                   where v.id = $1 and v.owner_id = $2""",
+                vendor_id, owner_id,
+            )
+        return _record_value(row)
+
+    async def vendor_payout_transfers(self, vendor_id: UUID, limit: int, offset: int) -> list[dict[str, Any]]:
         async with self.pool.acquire() as connection:
             rows = await connection.fetch(
-                """with route as (
-                     select extensions.st_setsrid(extensions.st_geomfromgeojson($1), 4326) as geom
-                   )
-                   select jsonb_build_object(
-                     'id', v.id, 'name', v.name, 'type', v.type,
-                     'lat', v.lat, 'lng', v.lng, 'address', v.address,
-                     'image_url', v.image_url
-                   ) as vendor,
-                   extensions.st_distance(v.location, route.geom::extensions.geography) / 1000.0 as distance_km,
-                   coalesce((select jsonb_agg(jsonb_build_object(
-                     'service_type', s.service_type, 'price_inr', s.price_inr
-                   ) order by s.service_type)
-                   from public.vendor_services s where s.vendor_id=v.id and s.is_active), '[]'::jsonb) as services,
-                   extensions.st_linelocatepoint(route.geom, v.location::extensions.geometry) as route_progress
-                   from public.vendors v cross join route
-                   where v.is_active and v.is_verified
-                     and extensions.st_dwithin(v.location, route.geom::extensions.geography, 15000)
-                   order by route_progress, distance_km limit 20""",
+                """select t.id, t.source_kind, t.source_reference_id, t.razorpay_order_id,
+                          t.razorpay_transfer_id, t.gross_amount_inr, t.vendor_amount_inr,
+                          t.commission_inr, t.rate_bps, t.status, t.failure_reason, t.settlement_utr,
+                          t.planned_at, t.provider_event_at, t.updated_at
+                   from public.vendor_payout_transfers t
+                   where t.vendor_id = $1
+                   order by t.planned_at desc limit $2 offset $3""",
+                vendor_id, limit, offset,
+            )
+        return [dict(row) for row in rows]
+
+    async def submit_vendor_kyc(self, owner_id: UUID, vendor_id: UUID, values: dict[str, Any]) -> dict[str, Any]:
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                current = await connection.fetchrow(
+                    """select o.kyc_status
+                       from public.vendors v
+                       join public.vendor_onboarding o on o.vendor_id = v.id
+                       where v.id = $1 and v.owner_id = $2
+                       for update of o""",
+                    vendor_id, owner_id,
+                )
+                if current is None:
+                    raise ApiError(404, "VENDOR_PROFILE_NOT_FOUND", "Vendor profile was not found")
+                if current["kyc_status"] == "verified":
+                    raise ApiError(
+                        409, "KYC_ALREADY_VERIFIED",
+                        "Payout details are already verified. Contact VoltStop support to change them.",
+                    )
+                row = await connection.fetchrow(
+                    """update public.vendor_onboarding
+                       set kyc_status = 'submitted',
+                           kyc_reference = coalesce($2, kyc_reference),
+                           kyc_gstin = coalesce($3, kyc_gstin),
+                           kyc_pan_masked = coalesce($4, kyc_pan_masked),
+                           bank_account_masked = coalesce($5, bank_account_masked),
+                           current_stage = case when current_stage = 'approval' then current_stage else 'banking' end,
+                           updated_at = now()
+                       where vendor_id = $1
+                       returning vendor_id, kyc_status, kyc_reference, kyc_gstin, kyc_pan_masked,
+                                 bank_account_masked, kyc_verified_at""",
+                    vendor_id, values.get("kyc_reference"), values.get("kyc_gstin"),
+                    values.get("kyc_pan_masked"), values.get("bank_account_masked"),
+                )
+        return _record_value(row) or {}
+
+    async def recommended_pitstops(
+        self,
+        route_geojson: str,
+        *,
+        radius_km: float,
+        connectors: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        # The validated RPC owns the GeoJSON guard, the radius bound, and the
+        # along-route ordering so no caller can silently re-implement them.
+        async with self.pool.acquire() as connection:
+            rows = await connection.fetch(
+                """select vendor, distance_km, services, available_slots,
+                          route_progress, charging, connector_match
+                   from public.route_pitstops($1::jsonb, $2, $3)""",
                 route_geojson,
+                radius_km,
+                connectors or None,
             )
         return [_record_value(row) or {} for row in rows]
 
-    async def _expire_pending_bookings(self, connection: Any) -> None:
+    async def recommended_route_vendors(
+        self,
+        geojson: str,
+        *,
+        radius_km: float,
+        connectors: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        return await self.recommended_pitstops(
+            geojson, radius_km=radius_km, connectors=connectors
+        )
+
+    async def _expire_pending_bookings(self, connection: Any) -> int:
         expired = await connection.fetch(
             """select id, slot_id from public.bookings
                where status='pending' and hold_expires_at is not null and hold_expires_at <= now()
@@ -1227,6 +1330,17 @@ class Database:
                    ) < cs.capacity""",
                 booking["slot_id"],
             )
+        return len(expired)
+
+    async def expire_due_booking_holds(self) -> int:
+        """Release holds whose payment never completed, without waiting for the next booking.
+
+        Lazy expiry only runs inside create_pending_booking, so an idle corridor keeps
+        slots sold out until another driver arrives.
+        """
+        async with self.pool.acquire() as connection:
+            async with connection.transaction():
+                return await self._expire_pending_bookings(connection)
 
     async def create_pending_booking(
         self,
@@ -1897,6 +2011,3 @@ class Database:
         result = await (self.customer_dispute(actor_id, dispute_id) if actor_type == "customer"
                         else self.vendor_dispute(vendor_id, dispute_id))
         return result or {}
-
-    async def recommended_route_vendors(self, geojson: str) -> list[dict[str, Any]]:
-        return await self.recommended_pitstops(geojson)

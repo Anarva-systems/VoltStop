@@ -37,6 +37,17 @@ class Settings(BaseSettings):
     google_routes_url: str = "https://routes.googleapis.com/directions/v2:computeRoutes"
     database_pool_min_size: int = 1
     database_pool_max_size: int = 10
+    route_corridor_radius_km: float = 15.0
+    companion_radius_km: float = 2.0
+    recommended_stop_limit: int = 8
+    ev_efficiency_derate: float = 0.85
+    ev_safety_buffer_soc_pct: float = 15.0
+    ev_target_charge_soc_pct: float = 80.0
+    ev_charging_window_high_soc_pct: float = 35.0
+    ev_charging_window_low_soc_pct: float = 20.0
+    fcm_project_id: str = ""
+    fcm_service_account_json: str = ""
+    vendor_settlement_enabled: bool = False
 
     @staticmethod
     def _canonical_origin(value: str) -> str:
@@ -89,6 +100,26 @@ class Settings(BaseSettings):
         environment = self.environment.strip().lower()
         if environment not in {"development", "staging", "production"}:
             raise ValueError("ENVIRONMENT must be development, staging, or production")
+
+        if not 0 < self.ev_efficiency_derate <= 1:
+            raise ValueError("EV_EFFICIENCY_DERATE must be greater than 0 and at most 1")
+        if not (
+            0 <= self.ev_safety_buffer_soc_pct
+            < self.ev_charging_window_low_soc_pct
+            < self.ev_charging_window_high_soc_pct
+            <= 100
+        ):
+            raise ValueError(
+                "EV SoC thresholds must satisfy 0 <= safety buffer < charging window low < charging window high <= 100"
+            )
+        if not self.ev_charging_window_high_soc_pct < self.ev_target_charge_soc_pct <= 100:
+            raise ValueError("EV_TARGET_CHARGE_SOC_PCT must sit above the charging window and at or below 100")
+        if not 0 < self.route_corridor_radius_km <= 50:
+            raise ValueError("ROUTE_CORRIDOR_RADIUS_KM must be greater than 0 and at most 50")
+        if not 0 < self.companion_radius_km <= 50:
+            raise ValueError("COMPANION_RADIUS_KM must be greater than 0 and at most 50")
+        if not 1 <= self.recommended_stop_limit <= 20:
+            raise ValueError("RECOMMENDED_STOP_LIMIT must be between 1 and 20")
 
         preview_origins = [
             origin.strip()

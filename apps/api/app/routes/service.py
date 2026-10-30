@@ -4,8 +4,14 @@ from typing import Any, Protocol
 
 import httpx
 
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.core.errors import ApiError
+from app.routes.energy import (
+    EnergyThresholds,
+    assess_charging_stop,
+    estimate_trip_energy,
+    hospitality_candidates,
+)
 
 PILOT_PLACES = {
     "srikakulam": "Srikakulam, Andhra Pradesh, India",
@@ -136,8 +142,9 @@ class GoogleRoutesProvider:
 
 
 class PilotRouteService:
-    def __init__(self, provider: RouteProvider) -> None:
+    def __init__(self, provider: RouteProvider, settings: Settings | None = None) -> None:
         self.provider = provider
+        self.settings = settings or get_settings()
 
     async def plan(
         self,
@@ -147,6 +154,9 @@ class PilotRouteService:
         current_soc: float,
         efficiency_km_per_kwh: float,
         database: Any,
+        *,
+        connectors: list[str] | None = None,
+        vehicle_max_charging_kw: float | None = None,
     ) -> dict[str, Any]:
         origin_key = origin.strip().split(",", 1)[0].strip().casefold()
         destination_key = destination.strip().split(",", 1)[0].strip().casefold()
@@ -159,22 +169,81 @@ class PilotRouteService:
         if origin_key == destination_key:
             raise ApiError(422, "INVALID_ROUTE", "Origin and destination must be different")
 
+        thresholds = EnergyThresholds.from_settings(self.settings)
         result = await self.provider.route(PILOT_PLACES[origin_key], PILOT_PLACES[destination_key])
         distance_km = result.distance_meters / 1000.0
-        consumption_kwh = distance_km / efficiency_km_per_kwh
-        remaining_soc = current_soc - (consumption_kwh / battery_kwh * 100)
-        stops = await database.recommended_route_vendors(result.geojson)
+        energy = estimate_trip_energy(
+            distance_km=distance_km,
+            battery_kwh=battery_kwh,
+            current_soc=current_soc,
+            efficiency_km_per_kwh=efficiency_km_per_kwh,
+            thresholds=thresholds,
+        )
+        stops = await database.recommended_route_vendors(
+            result.geojson,
+            radius_km=self.settings.route_corridor_radius_km,
+            connectors=connectors,
+        )
+        charging_stops = [
+            assess_charging_stop(
+                stop,
+                distance_km=distance_km,
+                battery_kwh=battery_kwh,
+                current_soc=current_soc,
+                effective_efficiency=energy["real_world_efficiency_km_per_kwh"],
+                vehicle_max_charging_kw=vehicle_max_charging_kw,
+                thresholds=thresholds,
+            )
+            for stop in stops
+            if stop.get("charging")
+        ]
+        other_stops = [stop for stop in stops if not stop.get("charging")]
+        charging_stops.sort(key=_stop_preference)
+        recommended = charging_stops[: self.settings.recommended_stop_limit]
+        await self._attach_companions(recommended, database)
+
         response = {
             "origin": PILOT_PLACES[origin_key],
             "destination": PILOT_PLACES[destination_key],
             "route": "NH-16",
-            "distance_km": round(distance_km, 2),
+            **energy,
             "distance_source": result.provider,
-            "estimated_consumption_kwh": round(consumption_kwh, 2),
-            "estimated_remaining_soc": round(remaining_soc, 2),
             "route_coordinates": json.loads(result.geojson).get("coordinates", []),
-            "recommended_pitstops": stops,
+            "recommended_pitstops": recommended,
+            "other_corridor_stops": other_stops,
+            "corridor_radius_km": self.settings.route_corridor_radius_km,
+            "connector_filter": connectors or [],
         }
         if result.duration_seconds is not None:
             response["estimated_duration_seconds"] = result.duration_seconds
         return response
+
+    async def _attach_companions(
+        self,
+        stops: list[dict[str, Any]],
+        database: Any,
+    ) -> None:
+        """Bundle places to eat or rest within a short detour of each recommended charger."""
+        for stop in stops[:3]:
+            vendor = stop.get("vendor") or {}
+            lat = vendor.get("lat")
+            lng = vendor.get("lng")
+            if lat is None or lng is None:
+                stop["hospitality_companions"] = []
+                continue
+            nearby = await database.nearby_vendors(float(lat), float(lng), self.settings.companion_radius_km)
+            stop["hospitality_companions"] = sorted(
+                hospitality_candidates(nearby, exclude_vendor_id=vendor.get("id")),
+                key=lambda companion: companion["distance_km"],
+            )[:5]
+
+
+def _stop_preference(stop: dict[str, Any]) -> tuple[Any, ...]:
+    """Reachable stops inside the charging window first, then the earliest usable option."""
+    return (
+        not stop.get("arrives_with_charge_remaining", False),
+        not stop.get("in_optimal_charging_window", False),
+        not stop.get("reaches_route_before_arrival", False),
+        stop.get("connector_match") != "exact",
+        stop.get("stop_placement_km") if stop.get("stop_placement_km") is not None else float("inf"),
+    )

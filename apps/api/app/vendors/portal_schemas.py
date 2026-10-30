@@ -1,7 +1,10 @@
 from datetime import datetime, timezone
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.core.connectors import normalize_connectors
+from app.payouts.service import KYC_BANK_ACCOUNT_MASK, KYC_GSTIN, KYC_PAN_MASK
 
 
 ServiceType = Literal["food", "charging", "sleep_and_charge", "room", "parking", "rest_area"]
@@ -51,7 +54,14 @@ class ServiceCreate(BaseModel):
     price_inr: float = Field(ge=0)
     capacity: int | None = Field(default=None, ge=1)
     availability: dict[str, object] = Field(default_factory=dict)
+    supported_connectors: list[str] = Field(default_factory=list, max_length=8)
+    max_power_kw: float | None = Field(default=None, gt=0, le=1000)
     is_active: bool = True
+
+    @field_validator("supported_connectors")
+    @classmethod
+    def valid_connectors(cls, values: list[str]) -> list[str]:
+        return normalize_connectors(values)
 
 
 class ServicePatch(BaseModel):
@@ -63,7 +73,16 @@ class ServicePatch(BaseModel):
     price_inr: float | None = Field(default=None, ge=0)
     capacity: int | None = Field(default=None, ge=1)
     availability: dict[str, object] | None = None
+    supported_connectors: list[str] | None = Field(default=None, max_length=8)
+    max_power_kw: float | None = Field(default=None, gt=0, le=1000)
     is_active: bool | None = None
+
+    @field_validator("supported_connectors")
+    @classmethod
+    def valid_connectors(cls, values: list[str] | None) -> list[str] | None:
+        if values is None:
+            return values
+        return normalize_connectors(values)
 
     @model_validator(mode="after")
     def non_nullable_fields_not_null(self):
@@ -118,3 +137,15 @@ class BookingDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     reason: str | None = Field(default=None, max_length=1000)
+
+
+class VendorKycSubmit(BaseModel):
+    """Vendor-declared payout details. Masked fields only: raw PAN, IFSC and bank
+    numbers are rejected by these patterns and stay with the payment provider."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kyc_reference: str | None = Field(default=None, min_length=4, max_length=120)
+    kyc_gstin: str | None = Field(default=None, pattern=KYC_GSTIN)
+    kyc_pan_masked: str = Field(pattern=KYC_PAN_MASK)
+    bank_account_masked: str = Field(pattern=KYC_BANK_ACCOUNT_MASK)

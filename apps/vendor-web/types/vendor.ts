@@ -24,6 +24,8 @@ export type VendorService = {
   price_inr: number;
   capacity: number | null;
   availability: Record<string, unknown>;
+  supported_connectors?: string[];
+  max_power_kw?: number | null;
   is_active: boolean;
 };
 
@@ -96,4 +98,54 @@ export type RevenueReport = {
   cancelled_bookings: number;
   captured_payments: number;
   refunded_payments: number;
+};
+
+export type PayoutKyc = {
+  status: string;
+  reference: string | null;
+  gstin: string | null;
+  pan_masked: string | null;
+  bank_account_masked: string | null;
+  verified_at: string | null;
+};
+
+export type PayoutStatus = {
+  state: string;
+  blocked_reason: string | null;
+  payouts_enabled: boolean;
+  settlement_enabled: boolean;
+  linked_account_id: string | null;
+  kyc_status: string;
+  onboarding_status: string;
+  commission_rate_bps: number | null;
+  commission_rate_source: string | null;
+  retention_floor_bps: number;
+  kyc: PayoutKyc;
+  routed_inr: string | number | null;
+  planned_inr: string | number | null;
+  failed_transfers: number | null;
+  last_transfer_at: string | null;
+};
+
+export type PayoutTransfer = {
+  id: string;
+  source_kind: string;
+  source_reference_id: string;
+  razorpay_order_id: string | null;
+  razorpay_transfer_id: string | null;
+  gross_amount_inr: string;
+  vendor_amount_inr: string;
+  commission_inr: string;
+  rate_bps: number;
+  status: string;
+  failure_reason: string | null;
+  settlement_utr: string | null;
+  planned_at: string;
+  provider_event_at: string | null;
+};
+
+export type PayoutTransferPage = {
+  items: PayoutTransfer[];
+  limit: number;
+  offset: number;
 };

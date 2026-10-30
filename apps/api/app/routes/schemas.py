@@ -22,6 +22,7 @@ class RoutePlanRequest(BaseModel):
     battery_kwh: float = Field(gt=0, le=500)
     current_soc: float = Field(ge=0, le=100, description="Current state of charge as a percentage")
     efficiency_km_per_kwh: float = Field(gt=0, le=20)
+    vehicle_id: UUID | None = None
     persist: bool = True
     departure_at: datetime | None = None
 

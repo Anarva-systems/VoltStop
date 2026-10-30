@@ -354,6 +354,7 @@ class _PreviewDriverRepository extends DriverRepository {
     required double efficiency,
     bool persist = true,
     DateTime? departureAt,
+    String? vehicleId,
   }) async {
     routePlanCalls++;
     return {
