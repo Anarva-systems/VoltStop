@@ -137,6 +137,9 @@ async def readiness(request: Request) -> JSONResponse:
         "vendor_settlement_transfers": "not_configured",
         "vendor_payout_ledger": "not_implemented",
         "platform_commission": "not_configured",
+        "push_notifications": "not_configured"
+        if not settings.fcm_service_account_json.strip()
+        else "migration_required",
     }
 
     try:
@@ -166,6 +169,35 @@ async def readiness(request: Request) -> JSONResponse:
                     capabilities["platform_commission"] = "incomplete"
             elif commission_table_ready or commission_ledger_ready or capture_trigger_ready:
                 capabilities["platform_commission"] = "incomplete"
+
+            payout_ledger_ready = await connection.fetchval(
+                "select to_regclass('public.vendor_payout_transfers') is not null"
+            )
+            payout_destination_ready = await connection.fetchval(
+                """select exists (
+                     select 1 from information_schema.columns
+                     where table_schema='public' and table_name='vendors'
+                       and column_name='razorpay_linked_account_id'
+                   )"""
+            )
+            if payout_ledger_ready and payout_destination_ready:
+                capabilities["vendor_payout_ledger"] = "configured"
+                if not settings.vendor_settlement_enabled:
+                    capabilities["vendor_settlement_transfers"] = "disabled_by_policy"
+                elif capabilities["customer_payment_collection"] == "configured":
+                    capabilities["vendor_settlement_transfers"] = "configured"
+            elif payout_ledger_ready or payout_destination_ready:
+                capabilities["vendor_payout_ledger"] = "incomplete"
+
+            if capabilities["push_notifications"] == "migration_required":
+                push_queue_ready = await connection.fetchval(
+                    "select to_regclass('public.push_deliveries') is not null"
+                )
+                push_tokens_ready = await connection.fetchval(
+                    "select to_regclass('public.user_push_tokens') is not null"
+                )
+                if push_queue_ready and push_tokens_ready:
+                    capabilities["push_notifications"] = "configured"
     except ApiError as exc:
         detail = exc.detail if isinstance(exc.detail, dict) else {}
         dependencies["database"] = (

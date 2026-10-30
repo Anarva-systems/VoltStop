@@ -11,7 +11,7 @@ type Reservation = { id: string; check_in: string; check_out: string; check_in_t
 export function HotelManagement() {
   const token = useAccessToken();
   const rooms = useVendorQuery<Room[]>("/hotels/rooms", token);
-  const reservations = useVendorQuery<Reservation[]>("/hotels/reservations", token);
+  const reservations = useVendorQuery<Reservation[]>("/hotels/reservations", token, "vendor", ["hotel_reservations"]);
   const [editing, setEditing] = useState<Room | "new" | null>(null);
   const [activeRoom, setActiveRoom] = useState<string | null>(null);
   const [inventory, setInventory] = useState<Inventory[]>([]);

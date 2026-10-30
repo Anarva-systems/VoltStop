@@ -33,6 +33,7 @@ OTHER_USER_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 VENDOR_ID = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
 SLOT_ID = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
 VEHICLE_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
+REST_STOP_ID = UUID("ffffffff-ffff-4fff-8fff-ffffffffffff")
 
 
 
@@ -69,11 +70,37 @@ class FakeDatabase:
             "amount_inr": Decimal("350.00"),
         }
         self.saved_routes = []
+        self.corridor_requests = []
         self.driver_trip_rows = {}
         self.driver_trip_idempotency = {}
         self.vehicle_rows = {}
         self.vehicle_idempotency = {}
+        self.payout_profile_record = {
+            "vendor_id": VENDOR_ID, "payouts_enabled": False, "razorpay_linked_account_id": None,
+            "commission_rate_bps_override": None, "kyc_status": "not_started",
+            "onboarding_status": "pending", "kyc_reference": None, "kyc_gstin": None,
+            "kyc_pan_masked": None, "bank_account_masked": None, "kyc_verified_at": None,
+            "platform_rate_bps": 500, "routed_inr": Decimal("0.00"), "planned_inr": Decimal("0.00"),
+            "failed_transfers": 0, "last_transfer_at": None,
+        }
+        self.payout_transfer_rows = []
+        self.kyc_submissions = []
         self.pool = FakeAdminPool()
+
+    async def vendor_payout_profile(self, owner_id, vendor_id):
+        self.vendor_scope_calls.append(("payout-status", owner_id, vendor_id))
+        if owner_id != USER_ID:
+            return None
+        return dict(self.payout_profile_record)
+
+    async def vendor_payout_transfers(self, vendor_id, limit, offset):
+        self.vendor_scope_calls.append(("payout-transfers", vendor_id, limit, offset))
+        return [dict(row) for row in self.payout_transfer_rows]
+
+    async def submit_vendor_kyc(self, owner_id, vendor_id, values):
+        self.vendor_scope_calls.append(("kyc-submit", owner_id, vendor_id))
+        self.kyc_submissions.append(values)
+        return {"vendor_id": vendor_id, "kyc_status": "submitted", **values}
 
     async def vendor_id_for_owner(self, owner_id):
         return VENDOR_ID if owner_id == USER_ID else None
@@ -143,8 +170,16 @@ class FakeDatabase:
         self.saved_routes.append((user_id, request, route, route_id))
         return route_id
 
-    async def recommended_route_vendors(self, geojson):
-        return [{"vendor": {"id": str(VENDOR_ID), "name": "Corridor Charge Stop"}, "distance_km": 2.5}]
+    async def recommended_route_vendors(self, geojson, *, radius_km, connectors=None):
+        self.corridor_requests.append((radius_km, tuple(connectors or ())))
+        return [{
+            "vendor": {"id": str(VENDOR_ID), "name": "Corridor Charge Stop", "lat": 17.6, "lng": 82.5},
+            "distance_km": 2.5,
+            "route_progress": 0.5,
+            "connector_match": "exact",
+            "services": [{"service_type": "food"}],
+            "charging": [{"id": "charge-1", "supported_connectors": ["CCS2"], "max_power_kw": 60}],
+        }]
 
     async def create_driver_trip(self, user_id, values, idempotency_key, request_fingerprint, route_plan):
         vehicle = await self.driver_vehicle(user_id, values["vehicle_id"])
@@ -273,7 +308,9 @@ class FakeDatabase:
 
     async def nearby_vendors(self, lat, lng, radius_km):
         return [{"vendor": {"id": str(VENDOR_ID), "name": "Demo Dhaba", "type": "restaurant"}, "distance_km": 4.2,
-                 "services": [], "availability": []}]
+                 "services": [], "available_slots": []},
+                {"vendor": {"id": str(REST_STOP_ID), "name": "Highway Rest Room", "type": "hotel"}, "distance_km": 1.1,
+                 "services": [{"service_type": "room"}], "available_slots": []}]
 
     async def vendor(self, vendor_id):
         if vendor_id != VENDOR_ID:
@@ -285,9 +322,6 @@ class FakeDatabase:
 
     async def slot(self, slot_id):
         return self.slot_record if slot_id == SLOT_ID and self.slot_record["status"] == "available" else None
-
-    async def recommended_route_vendors(self, route_geojson):
-        return [{"vendor": {"id": str(VENDOR_ID)}, "distance_km": 2.0}]
 
     async def create_pending_booking(self, user_id, slot_id, booking_id, expected_amount,
                                      idempotency_key, request_fingerprint, hold_expires_seconds):
@@ -446,8 +480,17 @@ class FakeAdminPool:
     def __init__(self):
         self.identity_record = None
         self.vendor_state = {"id": VENDOR_ID, "name": "Test Vendor", "is_active": False,
-                             "is_verified": False, "status": "pending"}
+                             "is_verified": False, "status": "pending",
+                             "payouts_enabled": False, "razorpay_linked_account_id": None,
+                             "commission_rate_bps_override": None, "onboarding_status": "pending",
+                             "kyc_status": "not_started"}
+        self.onboarding_state = {"vendor_id": VENDOR_ID, "kyc_status": "not_started",
+                                 "kyc_reference": None, "kyc_gstin": None, "kyc_pan_masked": None,
+                                 "bank_account_masked": None, "kyc_verified_at": None,
+                                 "kyc_verified_by": None}
         self.audit_rows = 0
+        self.push_tokens = {}
+        self.queries = []
 
     def acquire(self):
         return self
@@ -462,16 +505,58 @@ class FakeAdminPool:
         return None
 
     async def fetchrow(self, query, *args):
+        self.queries.append(query)
+        if "insert into public.user_push_tokens" in query:
+            owner, token, platform = args[0], args[1], args[2]
+            saved = {"user_id": owner, "platform": platform,
+                     "last_seen_at": datetime.now(timezone.utc)}
+            self.push_tokens[token] = saved
+            return {"id": uuid4(), **saved}
         if "from public.admin_users u" in query and self.identity_record:
             if self.identity_record["user_id"] == args[0]:
                 return self.identity_record
         if "for update of v" in query and "from public.vendors v" in query:
             return dict(self.vendor_state)
+        if "update public.vendors" in query and "returning id, payouts_enabled" in query:
+            self.vendor_state.update({"razorpay_linked_account_id": args[1],
+                                      "payouts_enabled": args[2],
+                                      "commission_rate_bps_override": args[3]})
+            return dict(self.vendor_state)
+        if "from public.vendor_onboarding where vendor_id = $1 for update" in query:
+            return dict(self.onboarding_state)
+        if "update public.vendor_onboarding" in query and "kyc_status = $2" in query:
+            self.onboarding_state.update({
+                "kyc_status": args[1],
+                "kyc_reference": args[2] or self.onboarding_state["kyc_reference"],
+                "kyc_gstin": args[3] or self.onboarding_state["kyc_gstin"],
+                "kyc_pan_masked": args[4] or self.onboarding_state["kyc_pan_masked"],
+                "bank_account_masked": args[5] or self.onboarding_state["bank_account_masked"],
+                "kyc_verified_by": args[6] if args[1] == "verified" else self.onboarding_state["kyc_verified_by"],
+            })
+            if args[1] == "verified":
+                self.onboarding_state["kyc_verified_at"] = datetime.now(timezone.utc)
+            return dict(self.onboarding_state)
         if "from public.vendors v" in query and "where v.id=$1" in query:
-            return {"id": VENDOR_ID, "name": "Test Vendor", "type": "hotel", "services": [], "bookings": 0}
+            return {"id": VENDOR_ID, "name": "Test Vendor", "type": "hotel", "bookings": 0,
+                    "services": [{"id": "11111111-1111-4111-8111-111111111111", "service_type": "charging",
+                                  "display_name": "Fast charge", "price_inr": 120.0, "capacity": 2,
+                                  "supported_connectors": ["CCS2", "CHAdeMO"], "max_power_kw": 60.0,
+                                  "is_active": True}]}
+        return None
+
+    async def fetchval(self, query, *args):
+        if "from public.user_push_tokens where user_id=$1" in query:
+            return sum(1 for row in self.push_tokens.values() if row["user_id"] == args[0])
         return None
 
     async def execute(self, query, *args):
+        if query.startswith("delete from public.user_push_tokens"):
+            owner, token = args[0], args[1]
+            saved = self.push_tokens.get(token)
+            if saved is None or saved["user_id"] != owner:
+                return "DELETE 0"
+            del self.push_tokens[token]
+            return "DELETE 1"
         if query.startswith("update public.vendors set is_active"):
             self.vendor_state.update({"is_active": args[1], "is_verified": args[2]})
         elif query.startswith("insert into public.vendor_onboarding"):
@@ -530,7 +615,7 @@ class FakeRefundPool:
 
 
 class FakeGateway:
-    async def create_order(self, booking_id, amount):
+    async def create_order(self, booking_id, amount, transfers=None):
         return {"order_id": "order_test_123", "amount_paise": int(amount * 100), "currency": "INR", "key_id": "rzp_test_public"}
 
 
@@ -561,14 +646,17 @@ def context():
     app.dependency_overrides[payment_gateway] = fake_gateway
     old_database_url = app_settings.database_url
     old_redis_enabled = app_settings.redis_enabled
+    old_fcm_credentials = app_settings.fcm_service_account_json
     app_settings.database_url = ""
     app_settings.redis_enabled = False
+    app_settings.fcm_service_account_json = ""
     try:
         with TestClient(app) as client:
             yield SimpleNamespace(client=client, database=database, redis=redis, user=user)
     finally:
         app_settings.database_url = old_database_url
         app_settings.redis_enabled = old_redis_enabled
+        app_settings.fcm_service_account_json = old_fcm_credentials
         app.dependency_overrides.clear()
 
 
@@ -1176,6 +1264,22 @@ def test_operations_admin_can_suspend_and_audit_vendor(context):
     assert context.database.pool.audit_rows == 1
 
 
+def test_admin_vendor_detail_projects_charger_capability(context):
+    context.database.pool.identity_record = {
+        "user_id": USER_ID, "role_name": "VENDOR_MANAGER", "is_active": True,
+        "permissions": ["vendors:read"],
+    }
+    response = context.client.get(f"/api/v1/admin/vendors/{VENDOR_ID}")
+    assert response.status_code == 200
+    service = response.json()["data"]["services"][0]
+    assert service["supported_connectors"] == ["CCS2", "CHAdeMO"]
+    assert service["max_power_kw"] == 60.0
+    detail_query = next(query for query in context.database.pool.queries
+                        if "jsonb_build_object" in query and "vendor_services s" in query)
+    assert "'supported_connectors',s.supported_connectors" in detail_query
+    assert "'max_power_kw',s.max_power_kw" in detail_query
+
+
 def test_support_admin_cannot_read_finance_transactions(context):
     context.database.pool.identity_record = {
         "user_id": USER_ID, "role_name": "SUPPORT_ADMIN", "is_active": True,
@@ -1206,6 +1310,268 @@ def test_finance_admin_cannot_access_disputes(context):
     response = context.client.get("/api/v1/admin/disputes")
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "ADMIN_PERMISSION_REQUIRED"
+
+
+def test_payout_routing_requires_manage_permission(context):
+    context.database.pool.identity_record = {
+        "user_id": USER_ID, "role_name": "FINANCE_ADMIN", "is_active": True,
+        "permissions": ["payouts:read"],
+    }
+    response = context.client.post(f"/api/v1/admin/vendors/{VENDOR_ID}/payout-routing", json={
+        "payouts_enabled": True, "razorpay_linked_account_id": "acc_test1234",
+        "reason": "Vendor cleared compliance review",
+    })
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "ADMIN_PERMISSION_REQUIRED"
+    assert context.database.pool.audit_rows == 0
+
+
+def test_payout_transfer_feed_requires_read_permission(context):
+    context.database.pool.identity_record = {
+        "user_id": USER_ID, "role_name": "SUPPORT_ADMIN", "is_active": True,
+        "permissions": ["bookings:read", "disputes:read"],
+    }
+    response = context.client.get("/api/v1/admin/payout-transfers")
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "ADMIN_PERMISSION_REQUIRED"
+
+
+def test_payout_routing_is_refused_until_vendor_is_kyc_verified(context):
+    context.database.pool.identity_record = {
+        "user_id": USER_ID, "role_name": "FINANCE_ADMIN", "is_active": True,
+        "permissions": ["payouts:read", "payouts:manage"],
+    }
+    context.database.pool.vendor_state.update({
+        "razorpay_linked_account_id": "acc_test1234", "onboarding_status": "approved",
+        "kyc_status": "under_review",
+    })
+    response = context.client.post(f"/api/v1/admin/vendors/{VENDOR_ID}/payout-routing", json={
+        "payouts_enabled": True, "reason": "Enable payouts after compliance review",
+    })
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "PAYOUT_ROUTING_NOT_READY"
+    assert context.database.pool.vendor_state["payouts_enabled"] is False
+    assert context.database.pool.audit_rows == 0
+
+
+def test_payout_routing_enables_a_verified_vendor(context):
+    context.database.pool.identity_record = {
+        "user_id": USER_ID, "role_name": "FINANCE_ADMIN", "is_active": True,
+        "permissions": ["payouts:read", "payouts:manage"],
+    }
+    context.database.pool.vendor_state.update({
+        "onboarding_status": "approved", "kyc_status": "verified",
+        "razorpay_linked_account_id": "acc_test1234",
+    })
+    response = context.client.post(f"/api/v1/admin/vendors/{VENDOR_ID}/payout-routing", json={
+        "payouts_enabled": True, "commission_rate_bps_override": 400,
+        "reason": "Enable payouts after compliance review",
+    })
+    assert response.status_code == 200
+    assert response.json()["data"]["payouts_enabled"] is True
+    assert response.json()["data"]["commission_rate_bps_override"] == 400
+    assert context.database.pool.vendor_state["razorpay_linked_account_id"] == "acc_test1234"
+    assert context.database.pool.audit_rows == 1
+
+
+def test_payout_routing_stops_payouts_without_other_changes(context):
+    context.database.pool.identity_record = {
+        "user_id": USER_ID, "role_name": "FINANCE_ADMIN", "is_active": True,
+        "permissions": ["payouts:read", "payouts:manage"],
+    }
+    context.database.pool.vendor_state.update({
+        "payouts_enabled": True, "razorpay_linked_account_id": "acc_test1234",
+        "onboarding_status": "approved", "kyc_status": "verified",
+    })
+    response = context.client.post(f"/api/v1/admin/vendors/{VENDOR_ID}/payout-routing", json={
+        "payouts_enabled": False, "reason": "Pause payouts while dispute is investigated",
+    })
+    assert response.status_code == 200
+    assert context.database.pool.vendor_state["payouts_enabled"] is False
+    assert context.database.pool.vendor_state["razorpay_linked_account_id"] == "acc_test1234"
+
+
+def test_payout_routing_rejects_a_rate_below_the_retention_floor(context):
+    context.database.pool.identity_record = {
+        "user_id": USER_ID, "role_name": "FINANCE_ADMIN", "is_active": True,
+        "permissions": ["payouts:read", "payouts:manage"],
+    }
+    context.database.pool.vendor_state.update({
+        "onboarding_status": "approved", "kyc_status": "verified",
+        "razorpay_linked_account_id": "acc_test1234",
+    })
+    response = context.client.post(f"/api/v1/admin/vendors/{VENDOR_ID}/payout-routing", json={
+        "payouts_enabled": True, "commission_rate_bps_override": 200,
+        "reason": "Match a competitor headline rate",
+    })
+    assert response.status_code == 422
+    assert context.database.pool.vendor_state["payouts_enabled"] is False
+    assert context.database.pool.audit_rows == 0
+
+
+def test_vendor_payout_status_explains_what_is_missing(context):
+    context.database.payout_profile_record.update({
+        "payouts_enabled": True, "kyc_status": "under_review", "onboarding_status": "approved",
+        "razorpay_linked_account_id": "acc_test1234",
+    })
+    response = context.client.get("/api/v1/vendor/payout-status")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["state"] == "kyc_required"
+    assert data["blocked_reason"] == "kyc_not_verified"
+    assert data["commission_rate_bps"] == 500
+    assert data["commission_rate_source"] == "platform_policy"
+    assert data["kyc"]["status"] == "under_review"
+    assert context.database.vendor_scope_calls == [("payout-status", USER_ID, VENDOR_ID)]
+
+
+def test_vendor_payout_status_tracks_effective_rate_and_platform_gate(context, monkeypatch):
+    context.database.payout_profile_record.update({
+        "payouts_enabled": True, "kyc_status": "verified", "onboarding_status": "approved",
+        "razorpay_linked_account_id": "acc_test1234", "commission_rate_bps_override": 400,
+    })
+    monkeypatch.setattr(app_settings, "vendor_settlement_enabled", False)
+    blocked = context.client.get("/api/v1/vendor/payout-status").json()["data"]
+    assert blocked["state"] == "ready_disabled"
+    assert blocked["blocked_reason"] is None
+    assert blocked["commission_rate_bps"] == 400
+    assert blocked["commission_rate_source"] == "vendor_override"
+    monkeypatch.setattr(app_settings, "vendor_settlement_enabled", True)
+    enabled = context.client.get("/api/v1/vendor/payout-status").json()["data"]
+    assert enabled["state"] == "routing_enabled"
+    assert enabled["linked_account_id"] == "acc_test1234"
+
+
+def test_vendor_payout_transfers_are_scoped_to_the_vendor(context):
+    context.database.payout_transfer_rows = [{
+        "id": uuid4(), "source_kind": "charging_booking", "razorpay_order_id": "order_test1",
+        "razorpay_transfer_id": "trf_test1", "gross_amount_inr": Decimal("700.00"),
+        "vendor_amount_inr": Decimal("672.00"), "commission_inr": Decimal("28.00"),
+        "rate_bps": 400, "status": "settled", "failure_reason": None,
+        "settlement_utr": "UTR123", "planned_at": datetime.now(timezone.utc),
+        "provider_event_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc),
+    }]
+    response = context.client.get("/api/v1/vendor/payout-transfers?limit=5&offset=10")
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["limit"] == 5 and payload["offset"] == 10
+    assert payload["items"][0]["gross_amount_inr"] == "700.00"
+    assert context.database.vendor_scope_calls == [("payout-transfers", VENDOR_ID, 5, 10)]
+
+
+def test_vendor_kyc_submission_accepts_only_masked_documents(context):
+    unmasked = context.client.post("/api/v1/vendor/kyc", json={
+        "kyc_pan_masked": "ABCDE1234F", "bank_account_masked": "50100123456789",
+    })
+    assert unmasked.status_code == 422
+    assert context.database.kyc_submissions == []
+    accepted = context.client.post("/api/v1/vendor/kyc", json={
+        "kyc_pan_masked": "ABCDE****F", "bank_account_masked": "*****1234",
+        "kyc_gstin": "29ABCDE1234F1Z5", "kyc_reference": "DL-2026-000918",
+    })
+    assert accepted.status_code == 200
+    assert accepted.json()["data"]["kyc_status"] == "submitted"
+    assert context.database.kyc_submissions == [{
+        "kyc_reference": "DL-2026-000918", "kyc_gstin": "29ABCDE1234F1Z5",
+        "kyc_pan_masked": "ABCDE****F", "bank_account_masked": "*****1234",
+    }]
+
+
+def test_kyc_verification_stamps_verifier_and_masks_documents(context):
+    context.database.pool.identity_record = {
+        "user_id": USER_ID, "role_name": "VENDOR_MANAGER", "is_active": True,
+        "permissions": ["vendors:read", "vendor_onboarding:manage"],
+    }
+    response = context.client.post(f"/api/v1/admin/vendors/{VENDOR_ID}/kyc", json={
+        "status": "verified", "kyc_reference": "DL-2026-000918",
+        "kyc_gstin": "29ABCDE1234F1Z5", "kyc_pan_masked": "ABCDE****F",
+        "bank_account_masked": "*****1111", "reason": "Documents matched the trade licence",
+    })
+    assert response.status_code == 200
+    onboarding = context.database.pool.onboarding_state
+    assert onboarding["kyc_status"] == "verified"
+    assert onboarding["kyc_verified_by"] == USER_ID
+    assert onboarding["kyc_verified_at"] is not None
+    assert onboarding["kyc_pan_masked"] == "ABCDE****F"
+    assert onboarding["bank_account_masked"] == "*****1111"
+    assert context.database.pool.audit_rows == 1
+
+
+def test_kyc_review_rejects_an_unmasked_pan(context):
+    context.database.pool.identity_record = {
+        "user_id": USER_ID, "role_name": "VENDOR_MANAGER", "is_active": True,
+        "permissions": ["vendors:read", "vendor_onboarding:manage"],
+    }
+    response = context.client.post(f"/api/v1/admin/vendors/{VENDOR_ID}/kyc", json={
+        "status": "verified", "kyc_pan_masked": "ABCDE1234F",
+        "reason": "Documents matched the trade licence",
+    })
+    assert response.status_code == 422
+    assert context.database.pool.onboarding_state["kyc_status"] == "not_started"
+    assert context.database.pool.audit_rows == 0
+
+
+PUSH_TOKEN = "fcm-device-token_0001:abc-DEF"
+
+
+def test_push_token_registers_the_authenticated_account(context):
+    response = context.client.put("/api/v1/notifications/push-token", json={
+        "token": PUSH_TOKEN, "platform": "android",
+    })
+    assert response.status_code == 200
+    stored = context.database.pool.push_tokens[PUSH_TOKEN]
+    assert stored["user_id"] == USER_ID
+    assert stored["platform"] == "android"
+    assert response.json()["data"]["platform"] == "android"
+
+
+def test_push_token_rotation_moves_the_device_without_duplicating_it(context):
+    context.client.put("/api/v1/notifications/push-token", json={
+        "token": PUSH_TOKEN, "platform": "android",
+    })
+    response = context.client.put("/api/v1/notifications/push-token", json={
+        "token": PUSH_TOKEN, "platform": "ios",
+    })
+    assert response.status_code == 200
+    assert len(context.database.pool.push_tokens) == 1
+    assert context.database.pool.push_tokens[PUSH_TOKEN]["platform"] == "ios"
+
+
+def test_push_token_rejects_an_unusable_registration_token(context):
+    for bad in ("short", "has space padding", "quote\"inside"):
+        response = context.client.put("/api/v1/notifications/push-token", json={
+            "token": bad, "platform": "android",
+        })
+        assert response.status_code == 422, bad
+    assert context.database.pool.push_tokens == {}
+
+
+def test_push_token_status_reports_devices_and_missing_credentials(context):
+    empty = context.client.get("/api/v1/notifications/push-status")
+    assert empty.status_code == 200
+    body = empty.json()["data"]
+    assert body["provider"] == "fcm"
+    assert body["configured"] is False
+    assert body["registered_devices"] == 0
+    context.client.put("/api/v1/notifications/push-token", json={
+        "token": PUSH_TOKEN, "platform": "android",
+    })
+    after = context.client.get("/api/v1/notifications/push-status")
+    assert after.json()["data"]["registered_devices"] == 1
+
+
+def test_push_token_unregistration_only_clears_a_known_device(context):
+    context.client.put("/api/v1/notifications/push-token", json={
+        "token": PUSH_TOKEN, "platform": "android",
+    })
+    missing = context.client.delete("/api/v1/notifications/push-token",
+                                    params={"token": "never-registered-device-token"})
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "PUSH_TOKEN_NOT_FOUND"
+    removed = context.client.delete("/api/v1/notifications/push-token", params={"token": PUSH_TOKEN})
+    assert removed.status_code == 200
+    assert removed.json()["data"]["removed"] == 1
+    assert context.database.pool.push_tokens == {}
 
 
 def test_invalid_nearby_coordinates_are_422(context):
@@ -1389,9 +1755,13 @@ class FakeRouteProvider:
 
 def test_pilot_route_service_uses_provider_distance():
     class FakeRouteDatabase:
-        async def recommended_route_vendors(self, geojson):
+        async def recommended_route_vendors(self, geojson, *, radius_km, connectors=None):
             assert "LineString" in geojson
-            return [{"vendor": {"name": "Demo Dhaba"}}]
+            assert radius_km == 15.0
+            return [{"vendor": {"name": "Demo Dhaba"}, "services": [{"service_type": "food"}]}]
+
+        async def nearby_vendors(self, lat, lng, radius_km):
+            return []
 
     async def run():
         result = await PilotRouteService(FakeRouteProvider()).plan(
@@ -1399,9 +1769,14 @@ def test_pilot_route_service_uses_provider_distance():
         )
         assert result["distance_km"] == 100
         assert result["distance_source"] == "test_provider"
-        assert result["estimated_consumption_kwh"] == round(100 / 6, 2)
+        # 6 km/kWh derated by 0.85 gives 5.1 km/kWh over 100 km.
+        assert result["real_world_efficiency_km_per_kwh"] == 5.1
+        assert result["estimated_consumption_kwh"] == round(100 / 5.1, 2)
         assert result["route_coordinates"] == [[80, 16], [84, 18]]
         assert result["estimated_duration_seconds"] == 5400
+        # A stop with no declared charging unit is never presented as a charger.
+        assert result["recommended_pitstops"] == []
+        assert result["other_corridor_stops"][0]["vendor"]["name"] == "Demo Dhaba"
 
     import asyncio
     asyncio.run(run())
@@ -1456,6 +1831,64 @@ def test_route_departure_time_is_timezone_aware_and_persisted(context):
         "departure_at": "2020-01-01T12:00:00",
     })
     assert naive.status_code == 422
+
+
+def test_route_plan_filters_corridor_stops_with_the_saved_vehicle(context):
+    app.dependency_overrides[route_service] = lambda: PilotRouteService(FakeRouteProvider())
+    vehicle = context.client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Tata", "model": "Nexon EV", "vehicle_type": "suv",
+            "battery_kwh": 40, "efficiency_km_per_kwh": 6, "current_soc": 70,
+            "connector_compatibility": ["CCS2"], "max_charging_kw": 50,
+        },
+        headers={"Idempotency-Key": "route-corridor-vehicle-001"},
+    )
+    assert vehicle.status_code == 200
+    vehicle_id = vehicle.json()["data"]["id"]
+
+    planned = context.client.post("/api/v1/routes/plan", json={
+        "origin": "Srikakulam", "destination": "Vijayawada",
+        "battery_kwh": 40, "current_soc": 70, "efficiency_km_per_kwh": 6,
+        "vehicle_id": vehicle_id, "persist": False,
+    })
+    assert planned.status_code == 200
+    data = planned.json()["data"]
+
+    # The driver's saved plugs narrow the corridor query; the request body cannot set them.
+    assert context.database.corridor_requests[-1] == (15.0, ("CCS2",))
+    assert data["connector_filter"] == ["CCS2"]
+
+    stop = data["recommended_pitstops"][0]
+    # Half-way along 100 km at 5.1 km/kWh effective, a 40 kWh pack sits at 45.49%.
+    assert stop["stop_placement_km"] == 50.0
+    assert stop["estimated_arrival_soc"] == 45.49
+    assert stop["charge_power_kw"] == 50.0
+    assert stop["charge_power_is_capped_by"] == "vehicle"
+    assert stop["estimated_charge_kwh"] == 13.8
+    assert stop["estimated_charge_minutes"] == 17
+    assert stop["in_optimal_charging_window"] is False
+    # Each recommended charger carries the eat-and-rest options around it.
+    assert [(item["name"], item["distance_km"]) for item in stop["hospitality_companions"]] == [
+        ("Highway Rest Room", 1.1)
+    ]
+
+    unplanned = context.client.post("/api/v1/routes/plan", json={
+        "origin": "Srikakulam", "destination": "Vijayawada",
+        "battery_kwh": 40, "current_soc": 70, "efficiency_km_per_kwh": 6,
+        "persist": False,
+    })
+    assert unplanned.status_code == 200
+    assert context.database.corridor_requests[-1] == (15.0, ())
+    assert unplanned.json()["data"]["recommended_pitstops"][0]["charge_power_kw"] == 60.0
+
+    foreign = context.client.post("/api/v1/routes/plan", json={
+        "origin": "Srikakulam", "destination": "Vijayawada",
+        "battery_kwh": 40, "current_soc": 70, "efficiency_km_per_kwh": 6,
+        "vehicle_id": str(uuid4()), "persist": False,
+    })
+    assert foreign.status_code == 404
+    assert foreign.json()["error"]["code"] == "VEHICLE_NOT_FOUND"
 
 
 def test_vehicle_routes_require_authentication(context):

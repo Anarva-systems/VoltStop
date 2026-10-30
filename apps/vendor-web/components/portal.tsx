@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { apiGet, userApi } from "@/services/api";
+import { supabaseBrowserClient } from "@/services/supabase";
 import { useVendorAuth } from "@/components/vendor-auth";
 import type { VendorProfile } from "@/types/vendor";
 
@@ -154,27 +155,47 @@ export function EmptyState({ title, description, action }: { title: string; desc
   return <div className="state-box"><span className="state-icon"><Icon name="inbox" size={21}/></span><h3>{title}</h3><p>{description}</p>{action}</div>;
 }
 
-export function useVendorQuery<T>(path: string, token: string | null, scope: "vendor" | "user" = "vendor") {
+function subscribeToPortalChanges(tables: string[], onChange: () => void): () => void {
+  const client = supabaseBrowserClient();
+  if (!client) return () => {};
+  const channel = client.channel(`voltstop-portal-${tables.join("-")}`);
+  tables.forEach((table) => {
+    channel.on("postgres_changes", { event: "*", schema: "public", table }, onChange);
+  });
+  channel.subscribe();
+  return () => {
+    void client.removeChannel(channel);
+  };
+}
+
+export function useVendorQuery<T>(path: string, token: string | null, scope: "vendor" | "user" = "vendor", wake: string[] = []) {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
   const reload = () => setVersion((value) => value + 1);
+  const wakeTables = wake.join(",");
   useEffect(() => {
     if (!token || !path || (error && data === null)) return;
     const refreshWhenActive = () => {
       if (document.visibilityState === "visible" && navigator.onLine) setVersion((value) => value + 1);
     };
-    const interval = window.setInterval(refreshWhenActive, 10_000);
+    // Realtime wakes the view as rows change; the slow interval only covers a dropped
+    // socket, so a stale dashboard cannot outlive one reconnect cycle.
+    const unsubscribe = wakeTables
+      ? subscribeToPortalChanges(wakeTables.split(","), refreshWhenActive)
+      : () => {};
+    const interval = window.setInterval(refreshWhenActive, wakeTables ? 60_000 : 10_000);
     document.addEventListener("visibilitychange", refreshWhenActive);
     window.addEventListener("online", refreshWhenActive);
     return () => {
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", refreshWhenActive);
       window.removeEventListener("online", refreshWhenActive);
+      unsubscribe();
     };
-  }, [data, error, path, token]);
+  }, [data, error, path, token, wakeTables]);
   useEffect(() => {
     let live = true;
     if (!token) { setData(null); setError(null); setErrorCode(null); setLoading(false); return () => { live = false; }; }

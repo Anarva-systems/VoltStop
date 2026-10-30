@@ -22,7 +22,7 @@ const events: Record<string, string> = {
 
 export default function VendorDashboardPage() {
   const token = useAccessToken();
-  const dashboard = useVendorQuery<VendorDashboard>("/dashboard", token);
+  const dashboard = useVendorQuery<VendorDashboard>("/dashboard", token, "vendor", ["bookings"]);
   const [actionBusy, setActionBusy] = useState("");
   const [confirmId, setConfirmId] = useState<string | null>(null);
 

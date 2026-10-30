@@ -10,7 +10,7 @@ const serviceOptions = ["charging", "food", "sleep_and_charge", "room", "parking
 
 export default function AvailabilityPage() {
   const token = useAccessToken();
-  const slots = useVendorQuery<VendorSlot[]>("/availability", token);
+  const slots = useVendorQuery<VendorSlot[]>("/availability", token, "vendor", ["charging_slots", "bookings"]);
   const services = useVendorQuery<VendorService[]>("/services", token);
   const [week, setWeek] = useState(0);
   const [dialog, setDialog] = useState<"create" | VendorSlot | null>(null);

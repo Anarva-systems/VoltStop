@@ -7,7 +7,7 @@ import { Button, ConfirmDialog, EmptyState, ErrorState, formatDate, formatMoney,
 import type { VendorBooking } from "@/types/vendor";
 
 export function VendorBookingsTable({ token, onlyRequests = false }: { token: string | null; onlyRequests?: boolean }) {
-  const bookings = useVendorQuery<VendorBooking[]>("/bookings", token);
+  const bookings = useVendorQuery<VendorBooking[]>("/bookings", token, "vendor", ["bookings"]);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
   const [busy, setBusy] = useState("");

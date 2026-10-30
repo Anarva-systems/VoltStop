@@ -23,7 +23,7 @@ const eventNames: Record<string, string> = {
 export default function VendorBookingDetailPage() {
   const { bookingId } = useParams<{ bookingId: string }>();
   const token = useAccessToken();
-  const bookingState = useVendorQuery<VendorBooking>(`/bookings/${bookingId}`, token);
+  const bookingState = useVendorQuery<VendorBooking>(`/bookings/${bookingId}`, token, "vendor", ["bookings"]);
   const [busy, setBusy] = useState(false);
   const [confirmAction, setConfirmAction] = useState<"accept" | "complete" | null>(null);
   const booking = bookingState.data;
