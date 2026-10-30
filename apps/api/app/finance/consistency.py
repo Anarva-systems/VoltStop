@@ -38,3 +38,31 @@ def check_financial_consistency(record: dict[str, Any]) -> list[dict[str, str]]:
         issues.append({"code": "PAYOUT_EXCEEDS_ELIGIBLE_REVENUE", "entity_id": entity,
                        "message": "Vendor payout exceeds eligible captured revenue."})
     return issues
+
+
+TRANSFER_STATUSES_WITH_PROVIDER_PROOF = {"processed", "settled", "reversed", "failed"}
+
+
+def check_payout_consistency(record: dict[str, Any]) -> list[dict[str, str]]:
+    """Findings for one payout ledger row joined against the order that carried it."""
+    issues: list[dict[str, str]] = []
+    payout_id = str(record.get("id") or record.get("razorpay_order_id") or "unknown")
+    order_amount = record.get("order_amount_inr")
+    gross = Decimal(str(record.get("gross_amount_inr") or 0))
+    vendor_share = Decimal(str(record.get("vendor_amount_inr") or 0))
+    commission = Decimal(str(record.get("commission_inr") or 0))
+    status = record.get("payout_status")
+
+    if order_amount is None:
+        issues.append({"code": "PAYOUT_ORDER_NOT_FOUND", "entity_id": payout_id,
+                       "message": "A payout row references an order that no payment record carries."})
+    elif Decimal(str(order_amount)) != gross:
+        issues.append({"code": "PAYOUT_GROSS_MISMATCH", "entity_id": payout_id,
+                       "message": "Payout gross amount does not match the payment order amount."})
+    if vendor_share + commission != gross:
+        issues.append({"code": "PAYOUT_SPLIT_MISMATCH", "entity_id": payout_id,
+                       "message": "Vendor share and commission do not add up to the gross amount."})
+    if status in TRANSFER_STATUSES_WITH_PROVIDER_PROOF and not record.get("razorpay_transfer_id"):
+        issues.append({"code": "PAYOUT_TRANSFER_UNMATCHED", "entity_id": payout_id,
+                       "message": "Payout status claims a provider outcome without a transfer identifier."})
+    return issues

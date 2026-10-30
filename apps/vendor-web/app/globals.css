@@ -133,8 +133,8 @@ a { color:inherit; text-decoration:none; }
 .cell-flag { display:block; margin-top:3px; color:var(--amber); font-size:10px; font-weight:700; }
 .state-pill { display:inline-flex; align-items:center; gap:6px; border:1px solid #31465a; border-radius:20px; padding:5px 9px; background:#182638; color:#bac8d4; font-size:9px; font-weight:750; text-transform:capitalize; }
 .state-pill:before { width:6px; height:6px; border-radius:50%; background:currentColor; content:""; }
-.state-confirmed,.state-accepted,.state-available,.state-captured,.state-completed { border-color:rgba(32,200,107,.25); background:rgba(32,200,107,.09); color:#70e99c; }
-.state-pending,.state-limited,.state-locked,.state-authorized { border-color:rgba(246,196,83,.25); background:rgba(246,196,83,.08); color:#f4ca69; }
+.state-confirmed,.state-accepted,.state-available,.state-captured,.state-completed,.state-routed,.state-settled,.state-processed,.state-enabled { border-color:rgba(32,200,107,.25); background:rgba(32,200,107,.09); color:#70e99c; }
+.state-pending,.state-limited,.state-locked,.state-authorized,.state-planned,.state-planned-not-sent,.state-planned-only,.state-partially-routed,.state-estimate-only,.state-calculated-only,.state-reversed { border-color:rgba(246,196,83,.25); background:rgba(246,196,83,.08); color:#f4ca69; }
 .state-cancelled,.state-rejected,.state-closed,.state-failed,.state-expired { border-color:rgba(255,119,119,.24); background:rgba(255,119,119,.08); color:#ff9191; }
 .state-booked { color:#83dff0; }
 .state-box { display:grid; min-height:230px; align-content:center; justify-items:center; padding:28px; text-align:center; }
@@ -195,6 +195,9 @@ a { color:inherit; text-decoration:none; }
 .service-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:9px; }
 .service-card h3 { margin:0; font-size:13px; }
 .service-card p { min-height:30px; margin:8px 0 14px; color:var(--muted); font-size:10px; line-height:1.45; }
+.service-specs { display:flex; flex-wrap:wrap; gap:6px; margin:-6px 0 13px; }
+.spec-tag { border:1px solid var(--line); border-radius:8px; padding:3px 8px; background:var(--elevated); color:var(--green); font-size:10px; font-weight:650; }
+.spec-tag-plain { background:transparent; border-style:dashed; color:var(--amber); font-weight:600; }
 .service-price { display:flex; align-items:baseline; gap:5px; color:var(--green); font-size:20px; font-weight:800; }
 .service-price small { color:var(--muted); font-size:10px; font-weight:550; }
 .service-actions { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:14px; border-top:1px solid var(--line); padding-top:12px; }
@@ -348,8 +351,8 @@ body { background:var(--bg); color:var(--text); }
 .filter-pill { border-color:#DCE3D8; background:#FFFEFA; color:#53685E; }
 .filter-pill.selected { border-color:#A9CFA2; background:#E7F1DE; color:#1B7650; }
 .state-pill { border-color:#DCE3D8; background:#EDF3E6; color:#53685E; }
-.state-confirmed,.state-accepted,.state-available,.state-captured,.state-completed { border-color:#CFE0C4; background:#E7F1DE; color:#1B7650; }
-.state-pending,.state-limited,.state-locked,.state-authorized { border-color:#E6D9B4; background:#F7EFDC; color:#79580D; }
+.state-confirmed,.state-accepted,.state-available,.state-captured,.state-completed,.state-routed,.state-settled,.state-processed,.state-enabled { border-color:#CFE0C4; background:#E7F1DE; color:#1B7650; }
+.state-pending,.state-limited,.state-locked,.state-authorized,.state-planned,.state-planned-not-sent,.state-planned-only,.state-partially-routed,.state-estimate-only,.state-calculated-only,.state-reversed { border-color:#E6D9B4; background:#F7EFDC; color:#79580D; }
 .state-cancelled,.state-rejected,.state-closed,.state-failed,.state-expired { border-color:#E5C6C2; background:#F6E9E7; color:#A43A32; }
 .state-booked { color:#1B7650; }
 .state-box h3 { color:#1A4035; }

@@ -8,6 +8,7 @@ import httpx
 
 from app.core.config import Settings
 from app.core.errors import ApiError
+from app.payouts.service import LINKED_ACCOUNT_PATTERN
 
 
 class RazorpayGateway:
@@ -15,16 +16,24 @@ class RazorpayGateway:
         self.client = client
         self.settings = settings
 
-    async def create_order(self, booking_id: UUID, amount_inr: Decimal) -> dict[str, Any]:
+    async def create_order(
+        self,
+        booking_id: UUID,
+        amount_inr: Decimal,
+        transfers: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         if not self.settings.razorpay_key_id or not self.settings.razorpay_key_secret:
             raise ApiError(503, "PAYMENT_UNAVAILABLE", "Razorpay is not configured")
         self._require_matching_mode()
         amount_paise = int(amount_inr * 100)
+        payload: dict[str, Any] = {"amount": amount_paise, "currency": "INR", "receipt": str(booking_id)}
+        if transfers:
+            payload["transfers"] = _validated_transfers(transfers, amount_paise)
         try:
             response = await self.client.post(
                 "https://api.razorpay.com/v1/orders",
                 auth=(self.settings.razorpay_key_id, self.settings.razorpay_key_secret),
-                json={"amount": amount_paise, "currency": "INR", "receipt": str(booking_id)},
+                json=payload,
             )
         except httpx.RequestError as exc:
             raise ApiError(503, "PAYMENT_UNAVAILABLE", "Razorpay could not be reached") from exc
@@ -83,6 +92,24 @@ class RazorpayGateway:
         except (KeyError, TypeError, ValueError) as exc:
             raise ApiError(502, "PAYMENT_PROVIDER_ERROR", "Razorpay returned an invalid payment") from exc
         return payment
+
+
+def _validated_transfers(transfers: list[dict[str, Any]], order_amount_paise: int) -> list[dict[str, Any]]:
+    """Refuse a split that could leave the platform wallet unable to pay its own fee."""
+    total_paise = 0
+    for transfer in transfers:
+        account_id = transfer.get("account_id")
+        amount = transfer.get("amount")
+        if not isinstance(account_id, str) or not LINKED_ACCOUNT_PATTERN.match(account_id):
+            raise ApiError(503, "PAYOUT_PLAN_INVALID", "Vendor payout destination is not a linked account")
+        if not isinstance(amount, int) or isinstance(amount, bool) or amount <= 0:
+            raise ApiError(503, "PAYOUT_PLAN_INVALID", "Vendor payout amount is invalid")
+        if str(transfer.get("currency") or "INR") != "INR":
+            raise ApiError(503, "PAYOUT_PLAN_INVALID", "Vendor payouts are supported in INR only")
+        total_paise += amount
+    if total_paise >= order_amount_paise:
+        raise ApiError(503, "PAYOUT_PLAN_INVALID", "Vendor payout leaves no margin for the payment fee")
+    return [dict(transfer) for transfer in transfers]
 
 
 def verify_webhook_signature(body: bytes, signature: str | None, secret: str) -> bool:

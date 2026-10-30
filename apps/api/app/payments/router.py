@@ -1,6 +1,8 @@
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 
@@ -12,10 +14,19 @@ from app.core.rate_limit import rate_limit
 from app.core.responses import success
 from app.payments.schemas import RazorpayCheckoutVerification
 from app.payments.service import RazorpayGateway, verify_checkout_signature, verify_webhook_signature
+from app.payouts.repository import PayoutRepository, TRANSFER_STATUSES
 from app.restaurants.repository import RestaurantRepository
 
 router = APIRouter(prefix="/payments", tags=["payments"])
 logger = logging.getLogger(__name__)
+
+
+def _first_text(entity: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = entity.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 @router.post("/razorpay/verify")
@@ -88,6 +99,45 @@ async def razorpay_webhook(
     try:
         payload = json.loads(raw_body)
         event = payload["event"]
+        if event in TRANSFER_STATUSES:
+            entity = payload["payload"]["transfer"]["entity"]
+            transfer_id = entity["id"]
+            payment_id = entity["source"]
+            amount_paise = entity["amount"]
+            currency = entity["currency"]
+            notes = entity.get("notes")
+            payout_reference = notes.get("voltstop_payout_id") if isinstance(notes, dict) else None
+            if (not isinstance(transfer_id, str) or not transfer_id
+                    or not isinstance(payment_id, str) or not payment_id
+                    or not isinstance(amount_paise, int) or isinstance(amount_paise, bool) or amount_paise <= 0
+                    or not isinstance(currency, str) or not currency
+                    or not isinstance(payout_reference, str)):
+                raise ValueError("invalid transfer fields")
+            occurred_at = payload.get("occurred_at")
+            try:
+                transfer = await PayoutRepository(database.pool).apply_transfer_event(
+                    payout_id=UUID(payout_reference),
+                    event=event,
+                    transfer_id=transfer_id,
+                    source_payment_id=payment_id,
+                    amount_paise=amount_paise,
+                    currency=currency,
+                    failure_reason=_first_text(entity, "failure_description", "error_description"),
+                    settlement_utr=_first_text(entity, "utr"),
+                    occurred_at=(
+                        datetime.fromtimestamp(occurred_at, tz=timezone.utc)
+                        if isinstance(occurred_at, (int, float)) and not isinstance(occurred_at, bool)
+                        else None
+                    ),
+                )
+            except ApiError as exc:
+                detail = exc.detail if isinstance(exc.detail, dict) else {}
+                logger.warning("Razorpay transfer webhook rejected: %s", detail.get("code", "TRANSFER_WEBHOOK_REJECTED"))
+                raise
+            if transfer is None:
+                raise ApiError(404, "PAYOUT_NOT_FOUND", "Payout ledger row was not found")
+            return success({"received": True, "processed": True, "status": transfer["status"]},
+                           "Transfer event processed")
         if event in ("refund.created", "refund.processed", "refund.failed"):
             entity = payload["payload"]["refund"]["entity"]
             refund_id = entity["id"]

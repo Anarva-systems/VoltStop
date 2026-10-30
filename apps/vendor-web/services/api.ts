@@ -1,5 +1,5 @@
 import type { ApiFailure, ApiSuccess } from "@/types/api";
-import { getApiBaseUrl } from "@/services/api-config";
+import { getApiBaseUrl } from "./api-config.ts";
 
 function responseErrorMessage(
   response: Response,

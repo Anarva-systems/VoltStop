@@ -18,6 +18,7 @@ from app.core.rate_limit import user_rate_limit
 from app.core.responses import success
 from app.bookings.schemas import CreateBookingRequest, SlotLockRequest
 from app.payments.service import RazorpayGateway
+from app.payouts.repository import plan_payment_payout, record_payment_payout
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
 
@@ -119,13 +120,25 @@ async def create_booking(
             settings.booking_lock_ttl_seconds,
         )
         if created:
+            split = await plan_payment_payout(
+                database.pool,
+                enabled=settings.vendor_settlement_enabled,
+                vendor_id=slot.get("vendor_id"),
+                source_kind="charging_booking",
+                source_reference_id=booking["id"],
+                gross_amount_inr=Decimal(slot["price_inr"]),
+            )
             try:
-                payment_order = await gateway.create_order(booking["id"], Decimal(slot["price_inr"]))
+                payment_order = await gateway.create_order(
+                    booking["id"], Decimal(slot["price_inr"]),
+                    [split.transfer()] if split else None,
+                )
             except ApiError:
                 await database.mark_order_unknown(booking["payment_id"])
                 raise
             try:
                 await database.attach_order(booking["payment_id"], payment_order["order_id"])
+                await record_payment_payout(database.pool, split, payment_order["order_id"])
             except ApiError:
                 await database.mark_order_unknown(booking["payment_id"])
                 raise

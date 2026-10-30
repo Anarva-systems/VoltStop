@@ -123,5 +123,8 @@
 .admin-button-secondary:hover:not(:disabled) { border-color:#A9CFA2; background:var(--elevated); }
 .admin-button:disabled { opacity:.55; }
 .admin-reason { display:grid; gap:7px; margin-top:12px; color:var(--muted); font-size:10px; font-weight:700; }
+.admin-form-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:13px; }
+.admin-form-grid label { display:grid; gap:7px; color:var(--muted); font-size:10px; font-weight:700; }
+.admin-form-grid .admin-filter { width:100%; }
 .admin-filter-label { display:inline-flex; align-items:center; gap:7px; color:var(--muted); font-size:10px; font-weight:680; }
 .admin-table-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; }

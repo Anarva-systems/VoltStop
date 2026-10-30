@@ -10,6 +10,7 @@ from app.core.database_dependency import DatabaseDependency
 from app.core.errors import ApiError
 from app.core.responses import success
 from app.payments.service import RazorpayGateway
+from app.payouts.repository import plan_payment_payout, record_payment_payout
 from app.restaurants.repository import RestaurantRepository
 from app.restaurants.schemas import CategoryCreate, MenuItemCreate, MenuItemPatch, OrderCreate, OrderStatusUpdate
 from app.vendors.portal_router import _vendor_id
@@ -45,9 +46,21 @@ async def create_order(payload: OrderCreate, request: Request, user: CurrentUser
     if payment["razorpay_order_id"]:
         provider_order = {"order_id": payment["razorpay_order_id"], "amount_paise": int(payment["amount_inr"] * 100), "currency": payment["currency"], "key_id": settings.razorpay_key_id}
     elif created and payment["order_state"] == "creating":
+        split = await plan_payment_payout(
+            database.pool,
+            enabled=settings.vendor_settlement_enabled,
+            vendor_id=order.get("vendor_id"),
+            source_kind="restaurant_order",
+            source_reference_id=order["id"],
+            gross_amount_inr=payment["amount_inr"],
+        )
         try:
-            provider_order = await RazorpayGateway(request.app.state.http_client, settings).create_order(order["id"], payment["amount_inr"])
+            provider_order = await RazorpayGateway(request.app.state.http_client, settings).create_order(
+                order["id"], payment["amount_inr"],
+                [split.transfer()] if split else None,
+            )
             await repo.attach_order(order["id"], provider_order["order_id"])
+            await record_payment_payout(database.pool, split, provider_order["order_id"])
         except Exception:
             await repo.mark_order_unknown(order["id"])
             raise

@@ -12,6 +12,7 @@ from app.core.responses import success
 from app.hotels.repository import HotelRepository
 from app.hotels.schemas import InventoryUpsert, QuoteRequest, ReservationCreate, RoomTypeCreate, RoomTypePatch
 from app.payments.service import RazorpayGateway
+from app.payouts.repository import plan_payment_payout, record_payment_payout
 from app.vendors.portal_router import _vendor_id
 
 router = APIRouter(prefix="/hotels", tags=["hotel-reservations"])
@@ -60,9 +61,21 @@ async def create_reservation(payload: ReservationCreate, request: Request, user:
         order = {"order_id": payment["razorpay_order_id"], "amount_paise": int(payment["amount_inr"] * 100),
                  "currency": payment["currency"], "key_id": settings.razorpay_key_id, "status": payment["status"]}
     elif created and payment["order_state"] == "creating":
+        split = await plan_payment_payout(
+            database.pool,
+            enabled=settings.vendor_settlement_enabled,
+            vendor_id=reservation.get("vendor_id"),
+            source_kind="hotel_reservation",
+            source_reference_id=reservation["id"],
+            gross_amount_inr=payment["amount_inr"],
+        )
         try:
-            order = await gateway.create_order(reservation["id"], payment["amount_inr"])
+            order = await gateway.create_order(
+                reservation["id"], payment["amount_inr"],
+                [split.transfer()] if split else None,
+            )
             await repo.attach_order(payment["id"], order["order_id"])
+            await record_payment_payout(database.pool, split, order["order_id"])
         except Exception:
             # Order creation can time out after the provider accepted it. Never retry
             # blindly; keep the inventory hold bounded and require reconciliation.

@@ -10,11 +10,13 @@ from app.core.errors import ApiError
 from app.core.dependencies import get_redis
 from app.core.config import Settings, get_settings
 from app.core.responses import success
+from app.payouts.service import payout_status_view
 from app.vendors.portal_schemas import (
     ServiceCreate,
     ServicePatch,
     SlotCreate,
     SlotPatch,
+    VendorKycSubmit,
     VendorProfileCreate,
     VendorProfilePatch,
 )
@@ -251,3 +253,35 @@ async def patch_vendor_service(
 async def get_vendor_revenue(user: CurrentUser, database: DatabaseDependency) -> dict[str, Any]:
     vendor_id = await _vendor_id(user, database)
     return success(await database.vendor_revenue(user.id, vendor_id))
+
+
+@router.get("/payout-status")
+async def get_vendor_payout_status(
+    user: CurrentUser, database: DatabaseDependency,
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    vendor_id = await _vendor_id(user, database)
+    profile = await database.vendor_payout_profile(user.id, vendor_id)
+    if profile is None:
+        raise ApiError(404, "VENDOR_PROFILE_NOT_FOUND", "No vendor profile is linked to this account")
+    return success(payout_status_view(profile, settlement_enabled=settings.vendor_settlement_enabled))
+
+
+@router.get("/payout-transfers")
+async def list_vendor_payout_transfers(
+    user: CurrentUser, database: DatabaseDependency,
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    vendor_id = await _vendor_id(user, database)
+    rows = await database.vendor_payout_transfers(vendor_id, limit, offset)
+    return success({"items": rows, "limit": limit, "offset": offset})
+
+
+@router.post("/kyc")
+async def submit_vendor_kyc(
+    payload: VendorKycSubmit, user: CurrentUser, database: DatabaseDependency
+) -> dict[str, Any]:
+    vendor_id = await _vendor_id(user, database)
+    record = await database.submit_vendor_kyc(user.id, vendor_id, payload.model_dump())
+    return success(record, "Payout details submitted for verification")

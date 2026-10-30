@@ -7,8 +7,9 @@ from uuid import UUID
 import asyncpg
 
 from app.core.errors import ApiError
-from app.finance.consistency import check_financial_consistency
+from app.finance.consistency import check_financial_consistency, check_payout_consistency
 from app.finance.refunds import validate_refund_amount
+from app.payouts.service import unroutable_reason
 
 
 def row_dict(row: asyncpg.Record | dict[str, Any] | None) -> dict[str, Any] | None:
@@ -158,8 +159,13 @@ class AdminRepository:
                           v.image_url, v.operating_hours, v.is_active, v.is_verified, v.created_at,
                           coalesce(o.status, case when v.is_verified then 'approved' else 'pending' end) as verification_status,
                           o.current_stage, o.completed_stages, o.document_references, o.decision_reason, o.submitted_at,
+                          v.payouts_enabled, v.razorpay_linked_account_id, v.commission_rate_bps_override,
+                          o.kyc_status, o.kyc_reference, o.kyc_gstin, o.kyc_pan_masked,
+                          o.bank_account_masked, o.kyc_verified_at,
                           coalesce((select jsonb_agg(jsonb_build_object('id',s.id,'service_type',s.service_type,
-                            'display_name',s.display_name,'price_inr',s.price_inr,'capacity',s.capacity,'is_active',s.is_active)
+                            'display_name',s.display_name,'price_inr',s.price_inr,'capacity',s.capacity,
+                            'supported_connectors',s.supported_connectors,'max_power_kw',s.max_power_kw,
+                            'is_active',s.is_active)
                             order by s.service_type) from public.vendor_services s where s.vendor_id=v.id),'[]'::jsonb) as services,
                           (select count(*) from public.bookings b where b.vendor_id=v.id) as bookings
                    from public.vendors v left join public.vendor_onboarding o on o.vendor_id=v.id where v.id=$1""", vendor_id,
@@ -181,18 +187,111 @@ class AdminRepository:
                      left join lateral (select coalesce(sum(rf.amount_inr),0) as completed_refunds
                        from public.refunds rf where rf.payment_id=p.id and rf.status='completed') r on true
                      where b.vendor_id=$1 and p.webhook_verified and p.status in ('captured','refunded')
+                   ), routed as (
+                     select sum(t.vendor_amount_inr) filter (where t.status in ('processed','settled')) as routed_inr,
+                            sum(t.vendor_amount_inr) filter (where t.status = 'planned') as planned_inr,
+                            sum(t.commission_inr) filter (where t.status in ('processed','settled')) as settled_commission_inr,
+                            count(*) filter (where t.status = 'failed') as failed_transfers,
+                            count(*) as transfer_rows
+                     from public.vendor_payout_transfers t where t.vendor_id = $1
                    )
-                   select v.id as vendor_id,v.name,
+                   select v.id as vendor_id,v.name,v.payouts_enabled,
                           coalesce(sum(paid.captured_amount_inr),0) as gross_revenue,
                           coalesce(sum(paid.completed_refunds),0) as completed_refunds,
                           coalesce(sum(paid.platform_fee),0) as platform_fee,
                           coalesce(sum(greatest(paid.captured_amount_inr-paid.completed_refunds,0)-paid.platform_fee),0) as vendor_payout,
-                          'calculated_only'::text as payout_status,
+                          coalesce(max(routed.routed_inr),0) as routed_inr,
+                          coalesce(max(routed.planned_inr),0) as planned_inr,
+                          coalesce(max(routed.settled_commission_inr),0) as settled_commission_inr,
+                          coalesce(max(routed.failed_transfers),0) as failed_transfers,
+                          case when coalesce(max(routed.transfer_rows),0)=0 then 'calculated_only'
+                               when coalesce(max(routed.routed_inr),0)>0 and coalesce(max(routed.planned_inr),0)>0 then 'partially_routed'
+                               when coalesce(max(routed.routed_inr),0)>0 then 'routed'
+                               else 'planned_only' end as payout_status,
                           $2::smallint as commission_rate_bps
-                   from public.vendors v left join paid on true
-                   where v.id=$1 group by v.id,v.name""", vendor_id, commission_rate_bps,
+                   from public.vendors v left join paid on true left join routed on true
+                   where v.id=$1 group by v.id,v.name,v.payouts_enabled""", vendor_id, commission_rate_bps,
             )
         return row_dict(row)
+
+    async def update_payout_routing(self, actor_id: UUID, role: str, vendor_id: UUID, *,
+                                    linked_account_id: str | None, payouts_enabled: bool,
+                                    commission_rate_bps: int | None, reason: str,
+                                    metadata: dict[str, Any]) -> dict[str, Any]:
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                current = await conn.fetchrow(
+                    """select v.id, v.payouts_enabled, v.razorpay_linked_account_id,
+                              v.commission_rate_bps_override,
+                              coalesce(o.status, 'pending') as onboarding_status,
+                              coalesce(o.kyc_status, 'not_started') as kyc_status
+                       from public.vendors v
+                       left join public.vendor_onboarding o on o.vendor_id = v.id
+                       where v.id = $1 for update of v""", vendor_id,
+                )
+                if current is None:
+                    raise ApiError(404, "VENDOR_NOT_FOUND", "Vendor was not found")
+                account_id = (linked_account_id if linked_account_id is not None
+                              else current["razorpay_linked_account_id"])
+                if payouts_enabled:
+                    blocked = unroutable_reason({
+                        "payouts_enabled": True,
+                        "razorpay_linked_account_id": account_id,
+                        "kyc_status": current["kyc_status"],
+                        "onboarding_status": current["onboarding_status"],
+                    })
+                    if blocked is not None:
+                        raise ApiError(
+                            409, "PAYOUT_ROUTING_NOT_READY",
+                            "Routing needs a linked account and an approved, KYC-verified vendor",
+                        )
+                updated = await conn.fetchrow(
+                    """update public.vendors
+                       set razorpay_linked_account_id = $2, payouts_enabled = $3,
+                           commission_rate_bps_override = $4, updated_at = now()
+                       where id = $1
+                       returning id, payouts_enabled, razorpay_linked_account_id,
+                                 commission_rate_bps_override""",
+                    vendor_id, account_id, payouts_enabled, commission_rate_bps,
+                )
+                await self._audit(conn, actor_id, role, "vendor.payout_routing_updated", "vendor",
+                                  str(vendor_id), reason, row_dict(current), row_dict(updated), metadata)
+        return row_dict(updated) or {}
+
+    async def update_vendor_kyc(self, actor_id: UUID, role: str, vendor_id: UUID, *, status: str,
+                                reference: str | None, gstin: str | None, pan_masked: str | None,
+                                bank_masked: str | None, reason: str | None,
+                                metadata: dict[str, Any]) -> dict[str, Any]:
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                current = await conn.fetchrow(
+                    """select vendor_id, kyc_status, kyc_reference, kyc_gstin, kyc_pan_masked,
+                              bank_account_masked, kyc_verified_at, kyc_verified_by
+                       from public.vendor_onboarding where vendor_id = $1 for update""", vendor_id,
+                )
+                if current is None:
+                    raise ApiError(404, "VENDOR_NOT_FOUND", "Vendor application was not found")
+                updated = await conn.fetchrow(
+                    """update public.vendor_onboarding
+                       set kyc_status = $2,
+                           kyc_reference = coalesce($3, kyc_reference),
+                           kyc_gstin = coalesce($4, kyc_gstin),
+                           kyc_pan_masked = coalesce($5, kyc_pan_masked),
+                           bank_account_masked = coalesce($6, bank_account_masked),
+                           kyc_verified_at = case when $2 = 'verified' then now() else kyc_verified_at end,
+                           kyc_verified_by = case when $2 = 'verified' then $7 else kyc_verified_by end,
+                           decision_reason = coalesce($8, decision_reason),
+                           updated_at = now()
+                       where vendor_id = $1
+                       returning vendor_id, kyc_status, kyc_reference, kyc_gstin, kyc_pan_masked,
+                                 bank_account_masked, kyc_verified_at, kyc_verified_by""",
+                    vendor_id, status, reference, gstin, pan_masked, bank_masked,
+                    actor_id if status == "verified" else None, reason,
+                )
+                await self._audit(conn, actor_id, role, f"vendor_kyc.{status}", "vendor",
+                                  str(vendor_id), reason or f"KYC marked {status}",
+                                  row_dict(current), row_dict(updated), metadata)
+        return row_dict(updated) or {}
 
     async def vendor_availability(self, vendor_id: UUID) -> list[dict[str, Any]]:
         async with self.pool.acquire() as conn:
@@ -372,24 +471,40 @@ class AdminRepository:
                      left join lateral (select coalesce(sum(rf.amount_inr),0) as completed_refunds
                        from public.refunds rf where rf.payment_id=p.id and rf.status='completed') r on true
                      where p.webhook_verified and p.status in ('captured','refunded')
+                   ), routed as (
+                     select vendor_id,
+                            sum(vendor_amount_inr) filter (where status in ('processed','settled')) as routed_inr,
+                            sum(commission_inr) filter (where status in ('processed','settled')) as settled_commission_inr,
+                            sum(vendor_amount_inr) filter (where status = 'planned') as planned_inr,
+                            count(*) filter (where status = 'failed') as failed_transfers,
+                            count(*) as transfer_rows
+                     from public.vendor_payout_transfers group by vendor_id
                    ), settled AS (
                      select vendor_id,sum(captured_amount_inr) as gross_revenue,
                             sum(completed_refunds) as refunds,sum(platform_fee) as platform_fee,
                             sum(greatest(captured_amount_inr-completed_refunds,0)-platform_fee) as calculated_payout
                      from paid group by vendor_id
                    )
-                   select v.id as vendor_id,v.name,
+                   select v.id as vendor_id,v.name,v.payouts_enabled,
                           coalesce(s.gross_revenue,0) as gross_revenue,
                           coalesce(s.refunds,0) as refunds,
                           coalesce(s.platform_fee,0) as platform_fee,
                           coalesce(s.calculated_payout,0) as calculated_payout,
-                          'calculated_only'::text as payout_status
+                          coalesce(r.routed_inr,0) as routed_inr,
+                          coalesce(r.planned_inr,0) as planned_inr,
+                          coalesce(r.settled_commission_inr,0) as settled_commission_inr,
+                          coalesce(r.failed_transfers,0) as failed_transfers,
+                          case when coalesce(r.transfer_rows,0)=0 then 'calculated_only'
+                               when coalesce(r.routed_inr,0)>0 and coalesce(r.planned_inr,0)>0 then 'partially_routed'
+                               when coalesce(r.routed_inr,0)>0 then 'routed'
+                               else 'planned_only' end as payout_status
                    from public.vendors v left join settled s on s.vendor_id=v.id
+                   left join routed r on r.vendor_id=v.id
                    order by v.name limit $1 offset $2""", limit, offset,
             )
         return {"items": [row_dict(row) for row in rows], "total": total, "limit": limit, "offset": offset,
                 "commission_rate_bps": commission_rate_bps,
-                "notice": f"A {commission_rate_bps / 100:g}% commission calculation policy is recorded for new verified charging payments; completed refunds reduce the calculated amount. Earlier verified payments are grandfathered at 0%. This accounting ledger does not split customer payments or send money. Vendor balances are estimates; no payout ledger or transfer provider is connected, so nothing is marked paid or sent."}
+                "notice": f"A {commission_rate_bps / 100:g}% commission policy is recorded for new verified charging payments; completed refunds reduce the calculated amount, and earlier verified payments are grandfathered at 0%. routed_inr and planned_inr come from the payout ledger: planned rows are instructions sent with an order, while routed rows were confirmed by a verified provider event. calculated_payout stays an estimate for vendors without routing."}
 
     async def refunds(self, status: str | None, booking_id: UUID | None, limit: int, offset: int) -> dict[str, Any]:
         where = "($1::text is null or r.status=$1) and ($2::uuid is null or r.booking_id=$2)"
@@ -778,17 +893,40 @@ class AdminRepository:
                    from public.bookings b left join public.payments p on p.id=b.payment_id
                    order by b.created_at desc limit $1""", limit + 1,
             )
-        truncated = len(rows) > limit
+            payout_rows = await conn.fetch(
+                """with collected as (
+                     select razorpay_order_id, amount_inr from public.payments
+                       where razorpay_order_id is not null
+                     union all
+                     select razorpay_order_id, amount_inr from public.hotel_reservation_payments
+                       where razorpay_order_id is not null
+                     union all
+                     select razorpay_order_id, amount_inr from public.restaurant_order_payments
+                       where razorpay_order_id is not null
+                   )
+                   select t.id, t.vendor_id, t.source_kind, t.razorpay_order_id, t.razorpay_transfer_id,
+                          t.gross_amount_inr, t.vendor_amount_inr, t.commission_inr,
+                          t.status as payout_status, c.amount_inr as order_amount_inr
+                   from public.vendor_payout_transfers t
+                   left join collected c on c.razorpay_order_id = t.razorpay_order_id
+                   order by t.planned_at desc limit $1""", limit + 1,
+            )
+        truncated = len(rows) > limit or len(payout_rows) > limit
         rows = rows[:limit]
+        payout_rows = payout_rows[:limit]
         findings = []
         for row in rows:
             findings.extend(check_financial_consistency(row_dict(row) or {}))
+        for row in payout_rows:
+            findings.extend(check_payout_consistency(row_dict(row) or {}))
         counts: dict[str, int] = {}
         for finding in findings:
             counts[finding["code"]] = counts.get(finding["code"], 0) + 1
         return {"findings": findings, "finding_counts": counts, "checked_bookings": len(rows),
-                "truncated": truncated, "payout_check_available": False,
-                "notice": "No payout ledger exists, so payout-to-revenue checks are unavailable."}
+                "checked_payouts": len(payout_rows),
+                "truncated": truncated, "payout_check_available": True,
+                "notice": "Payout rows are compared with the payment order that carried them; "
+                          "only verified provider events move a row past planned."}
 
     async def log_action(self, actor_id: UUID, role: str, action: str, entity_type: str,
                          entity_id: str | None, reason: str | None, before: dict[str, Any] | None,
@@ -837,6 +975,13 @@ class AdminRepository:
                 await self._audit(conn, actor_id, role, "admin_user.permissions_changed", "admin_user", str(target_id),
                                   reason, before, dict(updated), metadata)
         return row_dict(updated) or {}
+
+    async def log_hold_sweep(self, actor_id: UUID, role: str, expired: int,
+                             metadata: dict[str, Any] | None) -> None:
+        async with self.pool.acquire() as conn:
+            await self._audit(conn, actor_id, role, "bookings.holds_expired", "booking", None,
+                              f"Released {expired} expired booking hold(s)", None,
+                              {"expired": expired}, metadata)
 
     async def _audit(self, conn: asyncpg.Connection, actor_id: UUID, role: str, action: str,
                      entity_type: str, entity_id: str | None, reason: str | None,

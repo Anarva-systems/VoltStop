@@ -9,7 +9,8 @@ from redis.exceptions import RedisError
 from app.admin.auth import AdminContext, require_admin, require_permission
 from app.admin.refund_service import RefundService
 from app.admin.repository import AdminRepository
-from app.admin.schemas import AdminUserPatch, DisputeAction, DisputeCreate, DisputeRefundCreate, RefundCreate, RefundDecision, VendorAction
+from app.admin.schemas import AdminUserPatch, DisputeAction, DisputeCreate, DisputeRefundCreate, RefundCreate, RefundDecision, VendorAction, VendorKycReview, VendorPayoutRoutingUpdate
+from app.payouts.repository import PayoutRepository
 from app.core.config import Settings, get_settings
 from app.core.database_dependency import DatabaseDependency
 from app.core.dependencies import get_http_client, get_redis
@@ -167,6 +168,21 @@ async def live_operations(_admin: Annotated[AdminContext, Depends(require_permis
     return success(vendors)
 
 
+@router.post("/bookings/expire-holds", status_code=202)
+async def expire_booking_holds(
+    request: Request,
+    admin: Annotated[AdminContext, Depends(require_permission("operations:manage"))],
+    database: DatabaseDependency,
+) -> dict[str, Any]:
+    # Slots only free themselves lazily when the next driver books, so a cron call
+    # here is what keeps an idle corridor's availability honest.
+    expired = await database.expire_due_booking_holds()
+    await AdminRepository(database.pool).log_hold_sweep(
+        admin.user_id, admin.role_name, expired, _metadata(request),
+    )
+    return success({"expired": expired}, "Expired booking holds released")
+
+
 @router.get("/transactions")
 async def transactions(
     _admin: Annotated[AdminContext, Depends(require_permission("transactions:read"))], database: DatabaseDependency,
@@ -189,6 +205,55 @@ async def payouts(_admin: Annotated[AdminContext, Depends(require_permission("pa
                   database: DatabaseDependency, limit: int = Query(default=50, ge=1, le=100),
                   offset: int = Query(default=0, ge=0)) -> dict[str, Any]:
     return success(await AdminRepository(database.pool).payouts(limit, offset))
+
+
+@router.get("/payout-transfers")
+async def payout_transfers(
+    _admin: Annotated[AdminContext, Depends(require_permission("payouts:read"))],
+    database: DatabaseDependency,
+    vendor_id: UUID | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    repository = PayoutRepository(database.pool)
+    return success({
+        "items": await repository.list_transfers(vendor_id=vendor_id, limit=limit, offset=offset),
+        "summary": await repository.settlement_summary(),
+        "limit": limit, "offset": offset,
+    })
+
+
+@router.post("/vendors/{vendor_id}/payout-routing")
+async def update_payout_routing(
+    vendor_id: UUID, payload: VendorPayoutRoutingUpdate, request: Request,
+    admin: Annotated[AdminContext, Depends(require_permission("payouts:manage"))],
+    database: DatabaseDependency,
+) -> dict[str, Any]:
+    repository = AdminRepository(database.pool)
+    result = await repository.update_payout_routing(
+        admin.user_id, admin.role_name, vendor_id,
+        linked_account_id=payload.razorpay_linked_account_id,
+        payouts_enabled=payload.payouts_enabled,
+        commission_rate_bps=payload.commission_rate_bps_override,
+        reason=payload.reason, metadata=_metadata(request),
+    )
+    return success(result, "Payout routing updated")
+
+
+@router.post("/vendors/{vendor_id}/kyc")
+async def update_vendor_kyc(
+    vendor_id: UUID, payload: VendorKycReview, request: Request,
+    admin: Annotated[AdminContext, Depends(require_permission("vendor_onboarding:manage"))],
+    database: DatabaseDependency,
+) -> dict[str, Any]:
+    repository = AdminRepository(database.pool)
+    result = await repository.update_vendor_kyc(
+        admin.user_id, admin.role_name, vendor_id, status=payload.status,
+        reference=payload.kyc_reference, gstin=payload.kyc_gstin,
+        pan_masked=payload.kyc_pan_masked, bank_masked=payload.bank_account_masked,
+        reason=payload.reason, metadata=_metadata(request),
+    )
+    return success(result, "Vendor KYC updated")
 
 
 @router.get("/refunds")

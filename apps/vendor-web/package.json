@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "tsc --noEmit",
-    "test:supabase-config": "node --experimental-strip-types --test services/supabase.test.ts"
+    "test": "node --experimental-strip-types --test services/supabase.test.ts services/payout-view.test.ts services/payout-api.test.ts services/charger-specs.test.ts",
+    "test:supabase-config": "node --experimental-strip-types --test services/supabase.test.ts",
+    "test:payout": "node --experimental-strip-types --test services/payout-view.test.ts services/payout-api.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2",
