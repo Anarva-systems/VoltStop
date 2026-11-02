@@ -764,6 +764,7 @@ def test_supabase_token_verification_uses_auth_user_endpoint():
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             settings = get_settings().model_copy(update={
                 "supabase_url": "https://example.supabase.co",
+                "supabase_publishable_key": "",
                 "supabase_anon_key": "anon-test",
             })
             user = await verify_supabase_access_token("signed-token-value", client, settings)

@@ -1482,6 +1482,20 @@ List<Pitstop> _routePitstops(Map<String, dynamic>? data) {
       .toList(growable: false);
 }
 
+/// Indexes each recommended stop's plan verdict by vendor id. `Pitstop` only
+/// models the listing fields, so the raw entries are kept for the energy
+/// estimate that the route review adds to each row.
+Map<String, Map<String, dynamic>> _routeStopDetails(
+    Map<String, dynamic>? data) {
+  final items = data?['recommended_pitstops'];
+  if (items is! List) return const {};
+  return {
+    for (final item in items.whereType<Map>())
+      '${(item['vendor'] as Map?)?['id'] ?? item['id'] ?? ''}':
+          Map<String, dynamic>.from(item),
+  };
+}
+
 IconData _pitstopIcon(Pitstop vendor) {
   if (vendor.matchesDiscoveryCategory('Hotels')) return Icons.hotel_rounded;
   if (vendor.matchesDiscoveryCategory('Food')) return Icons.restaurant_rounded;
@@ -4188,6 +4202,7 @@ class _RoutePlannerScreenState extends State<RoutePlannerScreen> {
                 widget.app.profile?.carModel ??
                 'EV profile';
             final routeStops = _routePitstops(data);
+            final stopDetails = _routeStopDetails(data);
             final usableRangeKm =
                 double.tryParse('${data['usable_range_km']}');
             final corridorRadiusKm =

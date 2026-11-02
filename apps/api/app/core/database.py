@@ -24,7 +24,7 @@ def _record_value(record: asyncpg.Record | dict[str, Any] | None) -> dict[str, A
     if record is None:
         return None
     result = dict(record)
-    for key in ("vendor", "services", "available_slots", "availability", "timeline", "route_plan"):
+    for key in ("vendor", "services", "available_slots", "availability", "charging", "timeline", "route_plan"):
         if key in result:
             result[key] = _json_value(result[key])
     return result

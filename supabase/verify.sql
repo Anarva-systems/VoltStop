@@ -181,8 +181,6 @@ $$;
 -- Push delivery must queue from SQL, stay private to the service role, and hang its
 -- tokens off the profile that actually exists.
 do $$
-declare
-  fk_record pg_constraint%rowtype;
 begin
   if to_regclass('public.user_push_tokens') is null or to_regclass('public.push_deliveries') is null then
     raise exception 'Push delivery tables are missing';
@@ -197,13 +195,16 @@ begin
     raise exception 'A client role can read push tokens or the delivery queue';
   end if;
 
-  select c into fk_record from pg_constraint c
+  -- Whole-row assignment into a catalog %rowtype is rejected on PostgreSQL 18, so this
+  -- check reads as an existence test like the rest of the file.
+  if not exists (
+    select 1 from pg_constraint c
     join pg_namespace n on n.oid = c.connamespace
-   where n.nspname = 'public' and c.contype = 'f'
-     and c.conrelid = 'public.user_push_tokens'::regclass
-     and c.conname like 'user_push_tokens_user_id%'
-     and c.confrelid = 'public.profiles'::regclass;
-  if fk_record is null then
+     where n.nspname = 'public' and c.contype = 'f'
+       and c.conrelid = 'public.user_push_tokens'::regclass
+       and c.conname like 'user_push_tokens_user_id%'
+       and c.confrelid = 'public.profiles'::regclass
+  ) then
     raise exception 'user_push_tokens.user_id must reference public.profiles(id)';
   end if;
 

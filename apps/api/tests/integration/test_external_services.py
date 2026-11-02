@@ -1,33 +1,22 @@
 import asyncio
 import os
-from pathlib import Path
 
 import asyncpg
 import httpx
 import pytest
 from redis.asyncio import Redis
 
+from .db_gate import integration_database, load_integration_env
 
-def _load_integration_env() -> None:
-    env_file = Path(__file__).parents[4] / ".env.integration.local"
-    if not env_file.exists():
-        return
-    for line in env_file.read_text(encoding="utf-8").splitlines():
-        item = line.strip()
-        if not item or item.startswith("#") or "=" not in item:
-            continue
-        key, value = item.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
-
-
-_load_integration_env()
+load_integration_env()
+_can_run, _skip_reason = integration_database()
 
 
 def _enabled(name: str) -> bool:
     return os.getenv("RUN_INTEGRATION_TESTS") == "1" and bool(os.getenv(name))
 
 
-@pytest.mark.skipif(not _enabled("SUPABASE_DB_URL"), reason="Set RUN_INTEGRATION_TESTS=1 and SUPABASE_DB_URL")
+@pytest.mark.skipif(not _can_run, reason=_skip_reason)
 def test_supabase_postgres_connection_and_dispute_schema():
     async def run():
         connection = await asyncpg.connect(os.environ["SUPABASE_DB_URL"])

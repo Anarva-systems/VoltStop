@@ -5,12 +5,12 @@ from decimal import Decimal
 import asyncpg
 import pytest
 
+from .db_gate import integration_database
 
-def _enabled() -> bool:
-    return os.getenv("RUN_INTEGRATION_TESTS") == "1" and bool(os.getenv("SUPABASE_DB_URL"))
+_can_run, _skip_reason = integration_database()
 
 
-@pytest.mark.skipif(not _enabled(), reason="Set RUN_INTEGRATION_TESTS=1 and SUPABASE_DB_URL")
+@pytest.mark.skipif(not _can_run, reason=_skip_reason)
 def test_availability_window_exclusion_is_installed_and_enforced():
     """The exclusion constraint behaves as intended on a real Postgres.
 
@@ -36,7 +36,7 @@ def test_availability_window_exclusion_is_installed_and_enforced():
             except asyncpg.ExclusionViolationError:
                 return "rejected"
             finally:
-                if transaction.is_active():
+                if connection.is_in_transaction():
                     await transaction.rollback()
 
     async def run():
@@ -75,7 +75,7 @@ def test_availability_window_exclusion_is_installed_and_enforced():
     asyncio.run(run())
 
 
-@pytest.mark.skipif(not _enabled(), reason="Set RUN_INTEGRATION_TESTS=1 and SUPABASE_DB_URL")
+@pytest.mark.skipif(not _can_run, reason=_skip_reason)
 def test_closed_window_does_not_block_an_equivalent_replacement():
     """Closing a slot has to free its range, or vendors cannot re-publish availability."""
     async def run():
@@ -106,7 +106,7 @@ def test_closed_window_does_not_block_an_equivalent_replacement():
                 except asyncpg.ExclusionViolationError:
                     pytest.fail("a closed slot still reserves its availability window")
                 finally:
-                    if transaction.is_active():
+                    if connection.is_in_transaction():
                         await transaction.rollback()
         finally:
             await pool.close()

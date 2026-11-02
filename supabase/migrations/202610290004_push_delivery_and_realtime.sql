@@ -31,7 +31,11 @@ create table if not exists public.user_push_tokens (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles(id) on delete cascade,
   provider text not null default 'fcm' check (provider in ('fcm')),
-  token text not null check (token ~ '^[A-Za-z0-9_:=-]{16,512}$'),
+  -- The length bound is a separate predicate because PostgreSQL's regular-expression
+  -- engine rejects a repetition count above 255; `{16,512}` would make every insert fail.
+  token text not null check (
+    char_length(token) between 16 and 512 and token ~ '^[A-Za-z0-9_:=-]+$'
+  ),
   platform text not null check (platform in ('android', 'ios', 'web')),
   last_seen_at timestamptz not null default now(),
   created_at timestamptz not null default now(),

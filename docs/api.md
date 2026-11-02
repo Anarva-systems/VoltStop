@@ -229,4 +229,11 @@ Copy `.env.integration.example` to `.env.integration.local` and fill in a
 dedicated Supabase PostgreSQL database, Redis instance, and Razorpay test-mode
 credentials. Never use production Razorpay keys. Set `RUN_INTEGRATION_TESTS=1`
 and run `pytest apps/api/tests/integration -v`; the tests are skipped by default
-and never contact external services unless explicitly enabled.
+and never contact external services unless explicitly enabled. Every module reads
+`.env.integration.local` through `tests/integration/db_gate.py`, which never
+overrides a variable the shell already exported.
+
+The database-backed checks skip when nothing answers `SUPABASE_DB_URL`, so a
+laptop or CI job without a local Supabase reports skips rather than six schema
+failures. A database that does answer is never skipped: wrong credentials or an
+unapplied migration must fail the run.

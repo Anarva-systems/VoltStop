@@ -50,8 +50,8 @@ def test_slot_window_exclusion_names_btree_gist_opclasses_explicitly():
     'extensions', which the migration runner is not guaranteed to provide."""
     migration = _text("202610290002_charging_slot_window_exclusion.sql")
     assert "create extension if not exists btree_gist with schema extensions;" in migration
-    assert "vendor_id extensions.uuid_ops with =" in migration
-    assert "service_type extensions.text_ops with =" in migration
+    assert "vendor_id extensions.gist_uuid_ops with =" in migration
+    assert "service_type extensions.gist_text_ops with =" in migration
     assert "with &&" in migration
 
 

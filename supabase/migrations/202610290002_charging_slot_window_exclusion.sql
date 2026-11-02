@@ -36,15 +36,18 @@ end $$;
 -- equivalent one without first deleting history.
 --
 -- The uuid and text equality opclasses come from btree_gist, which lives in the
--- extensions schema. They are named explicitly because an unqualified exclusion element
--- is resolved through search_path, and a session whose search_path omits 'extensions'
--- would otherwise fail with "no default operator class for access method gist".
+-- extensions schema, and btree_gist prefixes its GiST classes with `gist_` — the
+-- unprefixed `uuid_ops`/`text_ops` that PostgreSQL resolves by name belong to the
+-- btree, hash and spgist access methods. They are named explicitly because an
+-- unqualified exclusion element is resolved through search_path, and a session whose
+-- search_path omits 'extensions' would otherwise fail with "no default operator class
+-- for access method gist".
 alter table public.charging_slots
   add constraint charging_slots_no_overlapping_window
   exclude using gist (
-    vendor_id extensions.uuid_ops with =,
-    service_type extensions.text_ops with =,
-    (case when status = 'closed' then '(empty)'::tstzrange
+    vendor_id extensions.gist_uuid_ops with =,
+    service_type extensions.gist_text_ops with =,
+    (case when status = 'closed' then 'empty'::tstzrange
           else tstzrange(slot_start_time, slot_end_time, '[)') end) with &&
   );
 

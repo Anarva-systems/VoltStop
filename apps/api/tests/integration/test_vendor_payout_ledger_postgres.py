@@ -6,11 +6,11 @@ from uuid import uuid4
 import asyncpg
 import pytest
 
-ORDER_ID = "order_voltstop_verify_0001"
+from .db_gate import integration_database
 
+ORDER_ID = "order_VoltStopVerify0001"
 
-def _enabled() -> bool:
-    return os.getenv("RUN_INTEGRATION_TESTS") == "1" and bool(os.getenv("SUPABASE_DB_URL"))
+_can_run, _skip_reason = integration_database()
 
 
 def _values(vendor_id, **overrides):
@@ -48,11 +48,11 @@ async def _attempt(connection, row):
     except asyncpg.PostgresError as error:
         return type(error).__name__
     finally:
-        if transaction.is_active():
+        if connection.is_in_transaction():
             await transaction.rollback()
 
 
-@pytest.mark.skipif(not _enabled(), reason="Set RUN_INTEGRATION_TESTS=1 and SUPABASE_DB_URL")
+@pytest.mark.skipif(not _can_run, reason=_skip_reason)
 def test_payout_ledger_constraints_hold_on_postgres():
     """The money invariants are enforced by the database, not only by the Python planner.
 
@@ -115,7 +115,7 @@ def test_payout_ledger_constraints_hold_on_postgres():
                     assert duplicate == "UniqueViolationError", \
                         "replaying the same order transfer created a second ledger row"
                 finally:
-                    if transaction.is_active():
+                    if connection.is_in_transaction():
                         await transaction.rollback()
         finally:
             await pool.close()
@@ -123,7 +123,7 @@ def test_payout_ledger_constraints_hold_on_postgres():
     asyncio.run(run())
 
 
-@pytest.mark.skipif(not _enabled(), reason="Set RUN_INTEGRATION_TESTS=1 and SUPABASE_DB_URL")
+@pytest.mark.skipif(not _can_run, reason=_skip_reason)
 def test_masked_kyc_columns_refuse_raw_document_numbers():
     """An operator must not be able to store a full PAN or bank account by mistake."""
     async def run():
@@ -151,7 +151,7 @@ def test_masked_kyc_columns_refuse_raw_document_numbers():
                     except asyncpg.CheckViolationError:
                         pass
                     finally:
-                        if transaction.is_active():
+                        if connection.is_in_transaction():
                             await transaction.rollback()
                     transaction = connection.transaction()
                     await transaction.start()
@@ -163,7 +163,7 @@ def test_masked_kyc_columns_refuse_raw_document_numbers():
                     except asyncpg.CheckViolationError:
                         pytest.fail(f"{column} rejected a correctly masked value")
                     finally:
-                        if transaction.is_active():
+                        if connection.is_in_transaction():
                             await transaction.rollback()
 
                 # Routing must not be switchable for a vendor whose review is incomplete.

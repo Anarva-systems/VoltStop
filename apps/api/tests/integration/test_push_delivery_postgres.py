@@ -5,15 +5,15 @@ from uuid import uuid4
 import asyncpg
 import pytest
 
+from .db_gate import integration_database
+
 TOKEN_A = "fcm-device-token-aaaa:0001"
 TOKEN_B = "fcm-device-token-bbbb:0002"
 
-
-def _enabled() -> bool:
-    return os.getenv("RUN_INTEGRATION_TESTS") == "1" and bool(os.getenv("SUPABASE_DB_URL"))
+_can_run, _skip_reason = integration_database()
 
 
-@pytest.mark.skipif(not _enabled(), reason="Set RUN_INTEGRATION_TESTS=1 and SUPABASE_DB_URL")
+@pytest.mark.skipif(not _can_run, reason=_skip_reason)
 def test_notification_wakes_realtime_and_queues_exactly_one_push():
     """A second device must not turn one notification into two deliveries or two sends.
 
@@ -91,7 +91,7 @@ def test_notification_wakes_realtime_and_queues_exactly_one_push():
                     assert locked.isdisjoint({row["id"] for row in concurrent}), \
                         "a second drain re-claimed a delivery that was already locked"
                 finally:
-                    if writer.is_active():
+                    if first.is_in_transaction():
                         await writer.rollback()
         finally:
             await pool.close()

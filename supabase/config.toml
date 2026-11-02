@@ -22,3 +22,22 @@ enable_signup = true
 [auth.sms.test_otp]
 "919876543210" = "123456"
 "+919876543210" = "123456"
+
+# OTP delivery through the MSG91 Edge Function in supabase/functions/send-sms.
+# Left disabled until the hook secret and MSG91 credentials exist in the stack;
+# test_otp above short-circuits those two numbers either way. GoTrue reaches the
+# function over the Docker network, and phone auth itself still needs a
+# provider block present to turn on — see docs/sms-hook-msg91-2026-10-31.md.
+# [auth.sms.twilio]
+# enabled = true
+# account_sid = "unused-when-the-hook-is-on"
+# message_service_sid = "unused-when-the-hook-is-on"
+# auth_token = "unused-when-the-hook-is-on"
+#
+# [auth.hook.send_sms]
+# enabled = true
+# uri = "http://host.docker.internal:54321/functions/v1/send-sms"
+# secrets = "env(SEND_SMS_HOOK_SECRET)"
+#
+# [functions.send-sms]
+# verify_jwt = false
